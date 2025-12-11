@@ -1,0 +1,4 @@
+module hnswlib {
+    header "hnswlib_swift_bridge.h"
+    export *
+}
