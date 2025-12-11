@@ -20,7 +20,10 @@ let package = Package(
         .target(
             name: "hnswlib",
             path: "Sources/hnswlib",
-            sources: ["hnswlib_swift_bridge.cpp"],
+            sources: [
+                "hnswlib_swift_bridge.cpp",
+                "space_f16.cpp"
+            ],
             publicHeadersPath: "include",
             cxxSettings: [
                 .headerSearchPath("include"),

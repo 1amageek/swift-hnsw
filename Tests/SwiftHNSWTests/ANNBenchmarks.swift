@@ -156,7 +156,7 @@ struct ANNBenchmarks {
         // Build index
         print("Building index (M=16, efConstruction=200)...")
         let buildStart = CFAbsoluteTimeGetCurrent()
-        let index = try HNSWIndex(
+        let index = try HNSWIndex<Float>(
             dimensions: d,
             maxElements: n,
             metric: .l2,
@@ -268,7 +268,7 @@ struct ANNBenchmarks {
 
         for config in configs {
             let buildStart = CFAbsoluteTimeGetCurrent()
-            let index = try HNSWIndex(
+            let index = try HNSWIndex<Float>(
                 dimensions: d,
                 maxElements: n,
                 metric: .l2,
@@ -325,7 +325,7 @@ struct ANNBenchmarks {
             let testQueries = randomVectors(count: queries, dimension: d)
 
             let buildStart = CFAbsoluteTimeGetCurrent()
-            let index = try HNSWIndex(
+            let index = try HNSWIndex<Float>(
                 dimensions: d,
                 maxElements: n,
                 metric: .l2,
@@ -393,7 +393,7 @@ struct ANNBenchmarks {
             }
 
             let buildStart = CFAbsoluteTimeGetCurrent()
-            let index = try HNSWIndex(
+            let index = try HNSWIndex<Float>(
                 dimensions: d,
                 maxElements: n,
                 metric: metric,
@@ -445,7 +445,7 @@ struct ANNBenchmarks {
 
         // Single operations
         print("\n[Single Operations]")
-        let singleIndex = try HNSWIndex(
+        let singleIndex = try HNSWIndex<Float>(
             dimensions: d,
             maxElements: n,
             metric: .l2,
@@ -467,7 +467,7 @@ struct ANNBenchmarks {
 
         // Batch operations
         print("[Batch Operations]")
-        let batchIndex = try HNSWIndex(
+        let batchIndex = try HNSWIndex<Float>(
             dimensions: d,
             maxElements: n,
             metric: .l2,
@@ -498,6 +498,189 @@ struct ANNBenchmarks {
         print("  Batch:  \(formatDouble(batchQPS, decimals: 0)) QPS")
     }
 
+    // MARK: - Float16 vs Float32 Comparison
+
+    @Test("Float16 vs Float32 Performance")
+    func float16VsFloat32Benchmark() throws {
+        let n = 10_000
+        let d = 384  // Common embedding dimension (e.g., OpenAI small)
+        let k = 10
+        let queries = 100
+
+        print("\n")
+        print(String(repeating: "=", count: 90))
+        print("Float16 vs Float32 Performance Comparison")
+        print("n=\(n), d=\(d), k=\(k), queries=\(queries)")
+        print(String(repeating: "=", count: 90))
+
+        print("\n[1/4] Generating data...")
+        let trainVectorsF32 = randomVectors(count: n, dimension: d)
+        let testQueriesF32 = randomVectors(count: queries, dimension: d)
+
+        // Convert to Float16
+        let trainVectorsF16: [[Float16]] = trainVectorsF32.map { $0.map { Float16($0) } }
+        let testQueriesF16: [[Float16]] = testQueriesF32.map { $0.map { Float16($0) } }
+
+        print("[2/4] Computing ground truth...")
+        let groundTruths = computeGroundTruth(
+            trainVectors: trainVectorsF32,
+            testQueries: testQueriesF32,
+            k: k
+        )
+
+        // Float32 benchmark
+        print("[3/4] Benchmarking Float32...")
+        let buildStartF32 = CFAbsoluteTimeGetCurrent()
+        let indexF32 = try HNSWIndex<Float>(
+            dimensions: d,
+            maxElements: n,
+            metric: .l2,
+            configuration: HNSWConfiguration(m: 16, efConstruction: 200)
+        )
+        for (i, vector) in trainVectorsF32.enumerated() {
+            try indexF32.add(vector, label: UInt64(i))
+        }
+        let buildTimeF32 = CFAbsoluteTimeGetCurrent() - buildStartF32
+
+        indexF32.setEfSearch(100)
+        _ = try indexF32.search(testQueriesF32[0], k: k)  // Warmup
+
+        let searchStartF32 = CFAbsoluteTimeGetCurrent()
+        var resultsF32: [[SearchResult]] = []
+        for query in testQueriesF32 {
+            resultsF32.append(try indexF32.search(query, k: k))
+        }
+        let searchTimeF32 = CFAbsoluteTimeGetCurrent() - searchStartF32
+
+        // Float16 benchmark
+        print("[4/4] Benchmarking Float16...")
+        let buildStartF16 = CFAbsoluteTimeGetCurrent()
+        let indexF16 = try HNSWIndex<Float16>(
+            dimensions: d,
+            maxElements: n,
+            metric: .l2,
+            configuration: HNSWConfiguration(m: 16, efConstruction: 200)
+        )
+        for (i, vector) in trainVectorsF16.enumerated() {
+            try indexF16.add(vector, label: UInt64(i))
+        }
+        let buildTimeF16 = CFAbsoluteTimeGetCurrent() - buildStartF16
+
+        indexF16.setEfSearch(100)
+        _ = try indexF16.search(testQueriesF16[0], k: k)  // Warmup
+
+        let searchStartF16 = CFAbsoluteTimeGetCurrent()
+        var resultsF16: [[SearchResult]] = []
+        for query in testQueriesF16 {
+            resultsF16.append(try indexF16.search(query, k: k))
+        }
+        let searchTimeF16 = CFAbsoluteTimeGetCurrent() - searchStartF16
+
+        // Calculate metrics
+        let qpsF32 = Double(queries) / searchTimeF32
+        let qpsF16 = Double(queries) / searchTimeF16
+        let latencyF32 = (searchTimeF32 / Double(queries)) * 1000
+        let latencyF16 = (searchTimeF16 / Double(queries)) * 1000
+
+        let recallF32 = calculateAverageRecall(results: resultsF32, groundTruths: groundTruths, k: k)
+        let recallF16 = calculateAverageRecall(results: resultsF16, groundTruths: groundTruths, k: k)
+
+        // Memory estimation (vectors only)
+        let memoryF32 = n * d * MemoryLayout<Float>.size
+        let memoryF16 = n * d * MemoryLayout<Float16>.size
+
+        // Results table
+        print("\n" + String(repeating: "-", count: 90))
+        print("| \(pad("Metric", 20)) | \(pad("Float32", 15)) | \(pad("Float16", 15)) | \(pad("Improvement", 15)) |")
+        print(String(repeating: "-", count: 90))
+        print("| \(pad("Vector Memory", 20)) | \(pad(formatSize(memoryF32), 15)) | \(pad(formatSize(memoryF16), 15)) | \(pad(formatDouble(Double(memoryF32) / Double(memoryF16), decimals: 1) + "x smaller", 15)) |")
+        print("| \(pad("Build Time", 20)) | \(pad(formatDouble(buildTimeF32, decimals: 2) + "s", 15)) | \(pad(formatDouble(buildTimeF16, decimals: 2) + "s", 15)) | \(pad(formatDouble(buildTimeF32 / buildTimeF16, decimals: 2) + "x", 15)) |")
+        print("| \(pad("Search QPS", 20)) | \(pad(formatDouble(qpsF32, decimals: 0), 15)) | \(pad(formatDouble(qpsF16, decimals: 0), 15)) | \(pad(formatDouble(qpsF16 / qpsF32, decimals: 2) + "x faster", 15)) |")
+        print("| \(pad("Search Latency", 20)) | \(pad(formatDouble(latencyF32, decimals: 3) + "ms", 15)) | \(pad(formatDouble(latencyF16, decimals: 3) + "ms", 15)) | \(pad(formatDouble(latencyF32 / latencyF16, decimals: 2) + "x", 15)) |")
+        print("| \(pad("Recall@10", 20)) | \(pad(formatDouble(recallF32 * 100, decimals: 1) + "%", 15)) | \(pad(formatDouble(recallF16 * 100, decimals: 1) + "%", 15)) | \(pad(formatDouble((recallF16 - recallF32) * 100, decimals: 2) + "%", 15)) |")
+        print(String(repeating: "-", count: 90))
+
+        // Summary
+        print("\n[Summary]")
+        print("  Memory Savings: \(formatDouble((1 - Double(memoryF16) / Double(memoryF32)) * 100, decimals: 0))%")
+        print("  Search Speedup: \(formatDouble(qpsF16 / qpsF32, decimals: 2))x")
+        print("  Recall Difference: \(formatDouble(abs(recallF16 - recallF32) * 100, decimals: 2))%")
+
+        // Verify Float16 recall is acceptable (within 5% of Float32)
+        let recallDiff = abs(recallF16 - recallF32)
+        #expect(recallDiff < 0.05, "Float16 recall should be within 5% of Float32")
+
+        // Verify memory savings
+        #expect(memoryF16 < memoryF32, "Float16 should use less memory")
+    }
+
+    // MARK: - Float16 Distance Metric Comparison
+
+    @Test("Float16 All Metrics")
+    func float16AllMetrics() throws {
+        let n = 5_000
+        let d = 128
+        let k = 10
+        let queries = 50
+
+        print("\n")
+        print(String(repeating: "=", count: 80))
+        print("Float16 Distance Metric Comparison")
+        print("n=\(n), d=\(d), k=\(k), queries=\(queries)")
+        print(String(repeating: "=", count: 80))
+
+        let trainVectors: [[Float16]] = (0..<n).map { _ in
+            (0..<d).map { _ in Float16.random(in: -1...1) }
+        }
+        let testQueries: [[Float16]] = (0..<queries).map { _ in
+            (0..<d).map { _ in Float16.random(in: -1...1) }
+        }
+
+        print("\n" + String(repeating: "-", count: 80))
+        print("| \(pad("Metric", 15)) | \(pad("Build(s)", 10)) | \(pad("QPS", 10)) | \(pad("Latency", 12)) |")
+        print(String(repeating: "-", count: 80))
+
+        for metric in [DistanceMetric.l2, DistanceMetric.innerProduct, DistanceMetric.cosine] {
+            let metricName: String
+            switch metric {
+            case .l2: metricName = "L2 (Euclidean)"
+            case .innerProduct: metricName = "Inner Product"
+            case .cosine: metricName = "Cosine"
+            }
+
+            let buildStart = CFAbsoluteTimeGetCurrent()
+            let index = try HNSWIndex<Float16>(
+                dimensions: d,
+                maxElements: n,
+                metric: metric,
+                configuration: HNSWConfiguration(m: 16, efConstruction: 200)
+            )
+            for (i, vector) in trainVectors.enumerated() {
+                try index.add(vector, label: UInt64(i))
+            }
+            let buildTime = CFAbsoluteTimeGetCurrent() - buildStart
+
+            index.setEfSearch(100)
+
+            // Warmup
+            _ = try index.search(testQueries[0], k: k)
+
+            // Benchmark
+            let searchStart = CFAbsoluteTimeGetCurrent()
+            for query in testQueries {
+                _ = try index.search(query, k: k)
+            }
+            let searchTime = CFAbsoluteTimeGetCurrent() - searchStart
+
+            let qps = Double(queries) / searchTime
+            let latencyMs = (searchTime / Double(queries)) * 1000
+
+            print("| \(pad(metricName, 15)) | \(pad(formatDouble(buildTime, decimals: 2), 10)) | \(pad(formatDouble(qps, decimals: 0), 10)) | \(pad(formatDouble(latencyMs, decimals: 3) + "ms", 12)) |")
+        }
+
+        print(String(repeating: "-", count: 80))
+    }
+
     // MARK: - Concurrent Read Test
 
     @Test("Concurrent Read Performance")
@@ -517,7 +700,7 @@ struct ANNBenchmarks {
         let trainVectors = randomVectors(count: n, dimension: d)
         let testQueries = randomVectors(count: queriesPerThread, dimension: d)
 
-        let index = try HNSWIndex(
+        let index = try HNSWIndex<Float>(
             dimensions: d,
             maxElements: n,
             metric: .l2,

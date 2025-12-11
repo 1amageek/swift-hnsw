@@ -2,7 +2,8 @@ import Foundation
 import hnswlib
 
 /// HNSW Index for approximate nearest neighbor search
-public final class HNSWIndex: @unchecked Sendable {
+/// Generic over scalar type (Float or Float16)
+public final class HNSWIndex<Scalar: HNSWScalar>: @unchecked Sendable {
 
     // MARK: - Properties
 
@@ -37,7 +38,7 @@ public final class HNSWIndex: @unchecked Sendable {
         self.metric = metric
         self.configuration = configuration
 
-        guard let space = metric.createSpace(dimensions: dimensions) else {
+        guard let space = metric.createSpace(dimensions: dimensions, scalar: Scalar.self) else {
             throw HNSWError.initializationFailed("Failed to create distance space")
         }
         self.space = space
@@ -125,16 +126,16 @@ extension HNSWIndex {
     /// - Parameters:
     ///   - vector: The vector to add
     ///   - label: Unique identifier for this vector
-    public func add(_ vector: [Float], label: UInt64) throws {
+    public func add(_ vector: [Scalar], label: UInt64) throws {
         try validateDimensions(vector.count)
 
         let processedVector = metric.requiresNormalization
-            ? VectorOperations.normalize(vector)
+            ? normalizeVector(vector)
             : vector
 
         try lock.withWriteLock {
             let success = processedVector.withUnsafeBufferPointer { buffer in
-                hnsw_add_point(index, buffer.baseAddress!, label)
+                Scalar.addPoint(index, data: buffer.baseAddress!, label: label)
             }
             guard success else {
                 throw HNSWError.addPointFailed("Failed to add point with label \(label)")
@@ -147,11 +148,11 @@ extension HNSWIndex {
     ///   - query: The query vector
     ///   - k: Number of nearest neighbors to find
     /// - Returns: Array of search results sorted by distance (closest first)
-    public func search(_ query: [Float], k: Int) throws -> [SearchResult] {
+    public func search(_ query: [Scalar], k: Int) throws -> [SearchResult] {
         try validateDimensions(query.count)
 
         let processedQuery = metric.requiresNormalization
-            ? VectorOperations.normalize(query)
+            ? normalizeVector(query)
             : query
 
         return lock.withReadLock {
@@ -161,12 +162,12 @@ extension HNSWIndex {
             let resultCount = processedQuery.withUnsafeBufferPointer { queryBuffer in
                 labels.withUnsafeMutableBufferPointer { labelsBuffer in
                     distances.withUnsafeMutableBufferPointer { distancesBuffer in
-                        hnsw_search_knn(
+                        Scalar.searchKnn(
                             index,
-                            queryBuffer.baseAddress!,
-                            Int32(k),
-                            labelsBuffer.baseAddress!,
-                            distancesBuffer.baseAddress!
+                            query: queryBuffer.baseAddress!,
+                            k: Int32(k),
+                            labels: labelsBuffer.baseAddress!,
+                            distances: distancesBuffer.baseAddress!
                         )
                     }
                 }
@@ -209,23 +210,23 @@ extension HNSWIndex {
     ///   - labels: Labels for each vector
     /// - Returns: Number of successfully added points
     @discardableResult
-    public func addBatch(_ vectors: [Float], labels: [UInt64]) throws -> Int {
+    public func addBatch(_ vectors: [Scalar], labels: [UInt64]) throws -> Int {
         let numVectors = labels.count
         try validateDimensions(vectors.count, expectedTotal: numVectors * dimensions)
 
         let processedVectors = metric.requiresNormalization
-            ? VectorOperations.normalizeBatch(vectors, count: numVectors, dimensions: dimensions)
+            ? normalizeVectorsBatch(vectors, count: numVectors, dimensions: dimensions)
             : vectors
 
         return lock.withWriteLock {
             Int(processedVectors.withUnsafeBufferPointer { vectorsBuffer in
                 labels.withUnsafeBufferPointer { labelsBuffer in
-                    hnsw_add_points_batch(
+                    Scalar.addPointsBatch(
                         index,
-                        vectorsBuffer.baseAddress!,
-                        labelsBuffer.baseAddress!,
-                        numVectors,
-                        dimensions
+                        data: vectorsBuffer.baseAddress!,
+                        labels: labelsBuffer.baseAddress!,
+                        numPoints: numVectors,
+                        dimension: dimensions
                     )
                 }
             })
@@ -238,7 +239,7 @@ extension HNSWIndex {
     ///   - startingLabel: Starting label (default: current count)
     /// - Returns: Number of successfully added points
     @discardableResult
-    public func addBatch(_ vectors: [[Float]], startingLabel: UInt64? = nil) throws -> Int {
+    public func addBatch(_ vectors: [[Scalar]], startingLabel: UInt64? = nil) throws -> Int {
         guard !vectors.isEmpty else { return 0 }
         guard vectors.allSatisfy({ $0.count == dimensions }) else {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: vectors.first?.count ?? 0)
@@ -257,11 +258,11 @@ extension HNSWIndex {
     ///   - numQueries: Number of queries
     ///   - k: Number of nearest neighbors per query
     /// - Returns: Array of search results for each query
-    public func searchBatch(_ queries: [Float], numQueries: Int, k: Int) throws -> [[SearchResult]] {
+    public func searchBatch(_ queries: [Scalar], numQueries: Int, k: Int) throws -> [[SearchResult]] {
         try validateDimensions(queries.count, expectedTotal: numQueries * dimensions)
 
         let processedQueries = metric.requiresNormalization
-            ? VectorOperations.normalizeBatch(queries, count: numQueries, dimensions: dimensions)
+            ? normalizeVectorsBatch(queries, count: numQueries, dimensions: dimensions)
             : queries
 
         return lock.withReadLock {
@@ -271,14 +272,14 @@ extension HNSWIndex {
             processedQueries.withUnsafeBufferPointer { queriesBuffer in
                 labels.withUnsafeMutableBufferPointer { labelsBuffer in
                     distances.withUnsafeMutableBufferPointer { distancesBuffer in
-                        _ = hnsw_search_knn_batch(
+                        _ = Scalar.searchKnnBatch(
                             index,
-                            queriesBuffer.baseAddress!,
-                            numQueries,
-                            dimensions,
-                            Int32(k),
-                            labelsBuffer.baseAddress!,
-                            distancesBuffer.baseAddress!
+                            queries: queriesBuffer.baseAddress!,
+                            numQueries: numQueries,
+                            dimension: dimensions,
+                            k: Int32(k),
+                            labels: labelsBuffer.baseAddress!,
+                            distances: distancesBuffer.baseAddress!
                         )
                     }
                 }
@@ -302,7 +303,7 @@ extension HNSWIndex {
     ///   - queries: Array of query vectors
     ///   - k: Number of nearest neighbors per query
     /// - Returns: Array of search results for each query
-    public func searchBatch(_ queries: [[Float]], k: Int) throws -> [[SearchResult]] {
+    public func searchBatch(_ queries: [[Scalar]], k: Int) throws -> [[SearchResult]] {
         guard !queries.isEmpty else { return [] }
         guard queries.allSatisfy({ $0.count == dimensions }) else {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: queries.first?.count ?? 0)
@@ -362,7 +363,7 @@ extension HNSWIndex {
         metric: DistanceMetric = .l2,
         maxElements: Int = 0
     ) throws -> HNSWIndex {
-        guard let space = metric.createSpace(dimensions: dimensions) else {
+        guard let space = metric.createSpace(dimensions: dimensions, scalar: Scalar.self) else {
             throw HNSWError.loadFailed("Failed to create distance space")
         }
 
@@ -400,3 +401,141 @@ extension HNSWIndex {
     }
 }
 
+// MARK: - Label Operations
+
+extension HNSWIndex {
+
+    /// Check if a label exists in the index
+    /// - Parameter label: The label to check
+    /// - Returns: True if the label exists and is not marked as deleted
+    public func contains(label: UInt64) -> Bool {
+        lock.withReadLock {
+            hnsw_contains_label(index, label)
+        }
+    }
+
+    /// Get the vector associated with a label
+    /// - Parameter label: The label to look up
+    /// - Returns: The vector if found, nil otherwise
+    public func getVector(label: UInt64) -> [Scalar]? {
+        lock.withReadLock {
+            var output = [Scalar](repeating: .zero, count: dimensions)
+            let success = output.withUnsafeMutableBufferPointer { buffer in
+                Scalar.getVector(index, label: label, output: buffer.baseAddress!, dimension: dimensions)
+            }
+            return success ? output : nil
+        }
+    }
+
+    /// Get all labels currently in the index (excluding deleted elements)
+    public var allLabels: [UInt64] {
+        lock.withReadLock {
+            // First get the count
+            let totalCount = hnsw_get_all_labels(index, nil, 0)
+            guard totalCount > 0 else { return [] }
+
+            // Then get the labels
+            var labels = [UInt64](repeating: 0, count: totalCount)
+            let actualCount = labels.withUnsafeMutableBufferPointer { buffer in
+                hnsw_get_all_labels(index, buffer.baseAddress!, totalCount)
+            }
+
+            return Array(labels.prefix(actualCount))
+        }
+    }
+}
+
+// MARK: - Data Serialization
+
+extension HNSWIndex {
+
+    /// Serialize the index to Data
+    /// - Returns: Serialized index data
+    public func serialize() throws -> Data {
+        try lock.withReadLock {
+            let size = hnsw_get_serialized_size(index)
+            guard size > 0 else {
+                throw HNSWError.serializationFailed("Failed to get serialized size")
+            }
+
+            var buffer = Data(count: size)
+            let success = buffer.withUnsafeMutableBytes { ptr in
+                hnsw_serialize_to_buffer(index, ptr.baseAddress!, size)
+            }
+
+            guard success else {
+                throw HNSWError.serializationFailed("Failed to serialize index to buffer")
+            }
+
+            return buffer
+        }
+    }
+
+    /// Load an index from Data
+    /// - Parameters:
+    ///   - data: Serialized index data
+    ///   - dimensions: Vector dimensions
+    ///   - metric: Distance metric
+    ///   - maxElements: Maximum elements (0 to use saved value)
+    /// - Returns: Loaded HNSW index
+    public static func load(
+        from data: Data,
+        dimensions: Int,
+        metric: DistanceMetric = .l2,
+        maxElements: Int = 0
+    ) throws -> HNSWIndex {
+        guard let space = metric.createSpace(dimensions: dimensions, scalar: Scalar.self) else {
+            throw HNSWError.loadFailed("Failed to create distance space")
+        }
+
+        let loadedIndex: HNSWIndexHandle? = data.withUnsafeBytes { ptr in
+            hnsw_load_from_buffer(ptr.baseAddress!, data.count, space, maxElements)
+        }
+
+        guard let loadedIndex else {
+            hnsw_destroy_space(space)
+            throw HNSWError.loadFailed("Failed to load index from data")
+        }
+
+        return HNSWIndex(
+            dimensions: dimensions,
+            metric: metric,
+            configuration: .balanced,
+            space: space,
+            index: loadedIndex
+        )
+    }
+}
+
+// MARK: - Vector Normalization Helpers
+
+extension HNSWIndex {
+
+    /// Normalize a vector based on the scalar type
+    private func normalizeVector(_ vector: [Scalar]) -> [Scalar] {
+        if Scalar.self == Float.self {
+            return VectorOperations.normalize(vector as! [Float]) as! [Scalar]
+        } else if Scalar.self == Float16.self {
+            return VectorOperations.normalize(vector as! [Float16]) as! [Scalar]
+        }
+        return vector
+    }
+
+    /// Normalize vectors in batch based on the scalar type
+    private func normalizeVectorsBatch(_ vectors: [Scalar], count: Int, dimensions: Int) -> [Scalar] {
+        if Scalar.self == Float.self {
+            return VectorOperations.normalizeBatch(vectors as! [Float], count: count, dimensions: dimensions) as! [Scalar]
+        } else if Scalar.self == Float16.self {
+            return VectorOperations.normalizeBatch(vectors as! [Float16], count: count, dimensions: dimensions) as! [Scalar]
+        }
+        return vectors
+    }
+}
+
+// MARK: - Type Aliases for Convenience
+
+/// HNSW Index using Float32 vectors (standard precision)
+public typealias HNSWIndexF32 = HNSWIndex<Float>
+
+/// HNSW Index using Float16 vectors (half precision, 50% memory savings)
+public typealias HNSWIndexF16 = HNSWIndex<Float16>

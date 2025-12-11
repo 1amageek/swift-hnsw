@@ -14,13 +14,18 @@ public enum DistanceMetric: String, Sendable, CaseIterable {
         self == .cosine
     }
 
-    /// Create the appropriate space handle for this metric
+    /// Create the appropriate space handle for this metric (Float32)
     internal func createSpace(dimensions: Int) -> HNSWSpaceHandle? {
+        createSpace(dimensions: dimensions, scalar: Float.self)
+    }
+
+    /// Create the appropriate space handle for this metric with generic scalar type
+    internal func createSpace<S: HNSWScalar>(dimensions: Int, scalar: S.Type) -> HNSWSpaceHandle? {
         switch self {
         case .l2:
-            return hnsw_create_l2_space(dimensions)
+            return S.createL2Space(dimensions: dimensions)
         case .innerProduct, .cosine:
-            return hnsw_create_ip_space(dimensions)
+            return S.createIPSpace(dimensions: dimensions)
         }
     }
 }
