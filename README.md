@@ -5,9 +5,10 @@ A high-performance Swift wrapper for [hnswlib](https://github.com/nmslib/hnswlib
 ## Features
 
 - **Fast ANN Search**: Sub-millisecond approximate nearest neighbor queries
+- **Float16 Support**: Native half-precision for 50% memory reduction
 - **Multiple Distance Metrics**: L2 (Euclidean), Inner Product, and Cosine similarity
 - **Thread-Safe**: Concurrent read access with RWLock synchronization
-- **SIMD Optimized**: Leverages Apple Accelerate framework for vector operations
+- **SIMD Optimized**: ARM NEON / x86 AVX acceleration for both Float32 and Float16
 - **Batch Operations**: Efficient bulk add and search operations
 - **Persistence**: Save and load indexes to/from disk
 - **Swift 6 Ready**: Full Sendable conformance for modern concurrency
@@ -40,11 +41,13 @@ Then add `SwiftHNSW` to your target dependencies:
 
 ## Quick Start
 
+### Float32 (Standard Precision)
+
 ```swift
 import SwiftHNSW
 
-// Create an index
-let index = try HNSWIndex(
+// Create an index with Float32 precision
+let index = try HNSWIndex<Float>(
     dimensions: 128,
     maxElements: 10000,
     metric: .l2
@@ -62,16 +65,80 @@ for result in results {
 }
 ```
 
+### Float16 (Half Precision)
+
+```swift
+import SwiftHNSW
+
+// Create an index with Float16 precision (50% memory savings)
+let index = try HNSWIndex<Float16>(
+    dimensions: 384,
+    maxElements: 100000,
+    metric: .l2
+)
+
+// Add vectors
+let embedding: [Float16] = [0.5, 0.3, 0.1, ...]
+try index.add(embedding, label: 0)
+
+// Search
+let query: [Float16] = [0.5, 0.3, 0.1, ...]
+let results = try index.search(query, k: 10)
+```
+
+### Type Aliases
+
+For convenience, type aliases are provided:
+
+```swift
+typealias HNSWIndexF32 = HNSWIndex<Float>    // Standard precision
+typealias HNSWIndexF16 = HNSWIndex<Float16>  // Half precision
+```
+
+## Float16 vs Float32
+
+| Aspect | Float32 | Float16 |
+|--------|---------|---------|
+| **Memory** | 4 bytes/element | 2 bytes/element |
+| **Precision** | ~7 digits | ~3 digits |
+| **Recall** | Baseline | ~Same (within 1%) |
+| **Speed** | Faster | Slightly slower* |
+| **Use Case** | General purpose | Large indexes, memory-constrained |
+
+\* Float16 requires conversion to Float32 for computation. The memory bandwidth savings often offset this on large datasets.
+
+### When to Use Float16
+
+- **Large indexes** (millions of vectors) where memory is the bottleneck
+- **High-dimensional embeddings** (384, 768, 1536 dimensions)
+- **Mobile/embedded** devices with limited RAM
+- **Cloud deployments** where memory = cost
+
+### When to Use Float32
+
+- **Maximum search speed** is critical
+- **Small to medium indexes** that fit comfortably in RAM
+- **High precision** requirements
+
 ## API Reference
 
 ### Creating an Index
 
 ```swift
-let index = try HNSWIndex(
+// Float32 index
+let index = try HNSWIndex<Float>(
     dimensions: 128,           // Vector dimensionality
     maxElements: 10000,        // Maximum capacity
     metric: .l2,               // Distance metric
     configuration: .balanced   // HNSW parameters
+)
+
+// Float16 index
+let indexF16 = try HNSWIndex<Float16>(
+    dimensions: 384,
+    maxElements: 100000,
+    metric: .cosine,
+    configuration: .highAccuracy
 )
 ```
 
@@ -141,6 +208,20 @@ let allResults = try index.searchBatch(queries, k: 10)
 index.setEfSearch(100)  // Higher = better recall, slower search
 ```
 
+### Retrieving Vectors
+
+```swift
+// Get the stored vector for a label
+if let vector: [Float] = index.getVector(label: 0) {
+    print("Vector: \(vector)")
+}
+
+// For Float16 index
+if let vector: [Float16] = indexF16.getVector(label: 0) {
+    print("Vector: \(vector)")
+}
+```
+
 ### Deletion
 
 ```swift
@@ -157,10 +238,17 @@ try index.unmarkDeleted(label: 0)
 // Save index
 try index.save(to: URL(fileURLWithPath: "/path/to/index.dat"))
 
-// Load index
-let loadedIndex = try HNSWIndex.load(
+// Load Float32 index
+let loadedIndex = try HNSWIndex<Float>.load(
     from: "/path/to/index.dat",
     dimensions: 128,
+    metric: .l2
+)
+
+// Load Float16 index
+let loadedIndexF16 = try HNSWIndex<Float16>.load(
+    from: "/path/to/index_f16.dat",
+    dimensions: 384,
     metric: .l2
 )
 ```
@@ -193,7 +281,24 @@ HNSW (Hierarchical Navigable Small World) is a graph-based approximate nearest n
 
 - **Build time**: O(n * log(n)) average
 - **Search time**: O(log(n)) average
-- **Memory**: O(n * M) for connections + O(n * d) for vectors
+- **Memory**: O(n * M) for connections + O(n * d * sizeof(Scalar)) for vectors
+
+## SIMD Optimization
+
+SwiftHNSW includes hand-optimized SIMD implementations:
+
+### ARM (Apple Silicon, iOS)
+- **Float32**: NEON intrinsics with 4x loop unrolling
+- **Float16**: Native `float16x8_t` operations with Float32 accumulation
+
+### x86_64 (Intel/AMD)
+- **Float32**: SSE/AVX with dimension-specific optimizations
+- **Float16**: F16C + AVX conversion instructions
+
+Both implementations use:
+- Dimension-specific dispatch (optimized paths for dim % 16, dim % 8)
+- Multiple accumulators to reduce dependency chains
+- Loop unrolling to improve instruction-level parallelism
 
 ## Thread Safety
 
@@ -222,13 +327,53 @@ Run the included benchmarks:
 swift test --filter ANNBenchmarks
 ```
 
-Typical performance (M1 MacBook Pro, 128-dim vectors):
+### Recall vs QPS Trade-off (128-dim, 10K vectors)
 
-| Operation | 10K vectors | 100K vectors |
-|-----------|-------------|--------------|
-| Build | ~50ms | ~600ms |
-| Search (k=10) | ~0.1ms | ~0.2ms |
-| Recall@10 | >95% | >95% |
+| efSearch | Recall@10 | QPS | Latency |
+|----------|-----------|-----|---------|
+| 10 | 28.0% | 8,823 | 0.11ms |
+| 20 | 42.8% | 5,369 | 0.19ms |
+| 40 | 61.9% | 3,097 | 0.32ms |
+| 80 | 78.8% | 1,781 | 0.56ms |
+| 160 | 91.8% | 1,008 | 0.99ms |
+| 320 | 98.1% | 605 | 1.65ms |
+
+### Scale Performance (128-dim, M=16, efConstruction=200, efSearch=100)
+
+| Vectors | Build Time | Build Rate | Search QPS | Latency | Index Size |
+|---------|------------|------------|------------|---------|------------|
+| 1,000 | 0.5s | 2,029/s | 2,798 | 0.36ms | 750 KB |
+| 5,000 | 6.0s | 836/s | 1,622 | 0.62ms | 3.7 MB |
+| 10,000 | 16.3s | 614/s | 1,348 | 0.74ms | 7.3 MB |
+| 20,000 | 41.1s | 486/s | 1,341 | 0.75ms | 14.6 MB |
+| 50,000 | 123.7s | 404/s | 1,180 | 0.85ms | 36.6 MB |
+
+### Float16 vs Float32 (384-dim, 10K vectors)
+
+| Metric | Float32 | Float16 | Comparison |
+|--------|---------|---------|------------|
+| Vector Memory | 14.6 MB | 7.3 MB | **50% smaller** |
+| Build Time | 40.7s | 45.4s | 0.90x |
+| Search QPS | 636 | 575 | 0.90x |
+| Search Latency | 1.57ms | 1.74ms | 0.90x |
+| Recall@10 | 67.9% | 68.2% | **Same** |
+
+### Distance Metrics (128-dim, 5K vectors)
+
+| Metric | Build Time | Search QPS | Latency |
+|--------|------------|------------|---------|
+| L2 (Euclidean) | 5.87s | 1,646 | 0.61ms |
+| Inner Product | 4.89s | 1,797 | 0.56ms |
+| Cosine | 4.53s | 1,782 | 0.56ms |
+
+### Concurrent Read Scaling (128-dim, 10K vectors)
+
+| Threads | Total QPS | Per-Thread QPS | Speedup |
+|---------|-----------|----------------|---------|
+| 1 | 1,453 | 1,453 | 1.0x |
+| 2 | 1,579 | 789 | 1.09x |
+| 4 | 2,827 | 707 | 1.95x |
+| 8 | 4,544 | 568 | 3.13x |
 
 ## Error Handling
 
