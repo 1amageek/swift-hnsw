@@ -22,23 +22,29 @@ static float L2SqrF16_NEON16(const void *pVect1v, const void *pVect2v, const voi
     const float16_t *pEnd = pVect1 + (qty16 << 4);
 
     while (pVect1 < pEnd) {
-        // First 8 elements
+        // First 8 elements - convert to f32 before subtraction to avoid fullfp16 requirement
         float16x8_t v1_0 = vld1q_f16(pVect1);
         float16x8_t v2_0 = vld1q_f16(pVect2);
-        float16x8_t diff0 = vsubq_f16(v1_0, v2_0);
 
-        float32x4_t diff0_lo = vcvt_f32_f16(vget_low_f16(diff0));
-        float32x4_t diff0_hi = vcvt_f32_f16(vget_high_f16(diff0));
+        float32x4_t v1_0_lo = vcvt_f32_f16(vget_low_f16(v1_0));
+        float32x4_t v1_0_hi = vcvt_f32_f16(vget_high_f16(v1_0));
+        float32x4_t v2_0_lo = vcvt_f32_f16(vget_low_f16(v2_0));
+        float32x4_t v2_0_hi = vcvt_f32_f16(vget_high_f16(v2_0));
+        float32x4_t diff0_lo = vsubq_f32(v1_0_lo, v2_0_lo);
+        float32x4_t diff0_hi = vsubq_f32(v1_0_hi, v2_0_hi);
         sum0 = vfmaq_f32(sum0, diff0_lo, diff0_lo);
         sum1 = vfmaq_f32(sum1, diff0_hi, diff0_hi);
 
         // Second 8 elements (2x unroll)
         float16x8_t v1_1 = vld1q_f16(pVect1 + 8);
         float16x8_t v2_1 = vld1q_f16(pVect2 + 8);
-        float16x8_t diff1 = vsubq_f16(v1_1, v2_1);
 
-        float32x4_t diff1_lo = vcvt_f32_f16(vget_low_f16(diff1));
-        float32x4_t diff1_hi = vcvt_f32_f16(vget_high_f16(diff1));
+        float32x4_t v1_1_lo = vcvt_f32_f16(vget_low_f16(v1_1));
+        float32x4_t v1_1_hi = vcvt_f32_f16(vget_high_f16(v1_1));
+        float32x4_t v2_1_lo = vcvt_f32_f16(vget_low_f16(v2_1));
+        float32x4_t v2_1_hi = vcvt_f32_f16(vget_high_f16(v2_1));
+        float32x4_t diff1_lo = vsubq_f32(v1_1_lo, v2_1_lo);
+        float32x4_t diff1_hi = vsubq_f32(v1_1_hi, v2_1_hi);
         sum0 = vfmaq_f32(sum0, diff1_lo, diff1_lo);
         sum1 = vfmaq_f32(sum1, diff1_hi, diff1_hi);
 
@@ -65,10 +71,13 @@ static float L2SqrF16_NEON8(const void *pVect1v, const void *pVect2v, const void
     while (pVect1 < pEnd) {
         float16x8_t v1 = vld1q_f16(pVect1);
         float16x8_t v2 = vld1q_f16(pVect2);
-        float16x8_t diff = vsubq_f16(v1, v2);
 
-        float32x4_t diff_lo = vcvt_f32_f16(vget_low_f16(diff));
-        float32x4_t diff_hi = vcvt_f32_f16(vget_high_f16(diff));
+        float32x4_t v1_lo = vcvt_f32_f16(vget_low_f16(v1));
+        float32x4_t v1_hi = vcvt_f32_f16(vget_high_f16(v1));
+        float32x4_t v2_lo = vcvt_f32_f16(vget_low_f16(v2));
+        float32x4_t v2_hi = vcvt_f32_f16(vget_high_f16(v2));
+        float32x4_t diff_lo = vsubq_f32(v1_lo, v2_lo);
+        float32x4_t diff_hi = vsubq_f32(v1_hi, v2_hi);
 
         sum = vfmaq_f32(sum, diff_lo, diff_lo);
         sum = vfmaq_f32(sum, diff_hi, diff_hi);
@@ -93,10 +102,13 @@ static float L2SqrF16_NEON_Residual(const void *pVect1v, const void *pVect2v, co
     for (; i + 8 <= qty; i += 8) {
         float16x8_t v1 = vld1q_f16(pVect1 + i);
         float16x8_t v2 = vld1q_f16(pVect2 + i);
-        float16x8_t diff = vsubq_f16(v1, v2);
 
-        float32x4_t diff_lo = vcvt_f32_f16(vget_low_f16(diff));
-        float32x4_t diff_hi = vcvt_f32_f16(vget_high_f16(diff));
+        float32x4_t v1_lo = vcvt_f32_f16(vget_low_f16(v1));
+        float32x4_t v1_hi = vcvt_f32_f16(vget_high_f16(v1));
+        float32x4_t v2_lo = vcvt_f32_f16(vget_low_f16(v2));
+        float32x4_t v2_hi = vcvt_f32_f16(vget_high_f16(v2));
+        float32x4_t diff_lo = vsubq_f32(v1_lo, v2_lo);
+        float32x4_t diff_hi = vsubq_f32(v1_hi, v2_hi);
 
         sum = vfmaq_f32(sum, diff_lo, diff_lo);
         sum = vfmaq_f32(sum, diff_hi, diff_hi);
