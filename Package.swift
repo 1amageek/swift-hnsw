@@ -26,20 +26,14 @@ let package = Package(
             ],
             publicHeadersPath: "include",
             cxxSettings: [
-                .headerSearchPath("include"),
-                // Enable SIMD optimizations
-                .unsafeFlags(["-std=c++17", "-O3", "-ffast-math", "-march=native"], .when(configuration: .release)),
-                .unsafeFlags(["-std=c++17"], .when(configuration: .debug))
+                .headerSearchPath("include")
             ]
         ),
         // Swift wrapper target
         .target(
             name: "SwiftHNSW",
             dependencies: ["hnswlib"],
-            path: "Sources/SwiftHNSW",
-            swiftSettings: [
-                .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release))
-            ]
+            path: "Sources/SwiftHNSW"
         ),
         .testTarget(
             name: "SwiftHNSWTests",
