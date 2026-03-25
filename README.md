@@ -322,7 +322,17 @@ await withTaskGroup(of: [SearchResult].self) { group in
 
 ## Benchmarks
 
-Measured on Apple Silicon with Release build (`-Os`, NEON SIMD enabled).
+**Measurement methodology:**
+
+- **Platform**: Apple Silicon (arm64), macOS 15
+- **Build**: Release (`-Os`) via `xcodebuild -configuration Release ENABLE_TESTABILITY=YES`
+- **SIMD**: ARM NEON with FMA (`vfmaq_f32`) for L2 and Inner Product distance
+- **Data**: Random vectors sampled uniformly from [-1, 1]
+- **Ground truth**: Brute-force exact search (L2 for Float32/Float16, cosine for TurboQuant)
+- **Recall@k**: Fraction of true k-nearest neighbors found in the approximate result
+- **QPS**: Queries per second (single-threaded, excluding index construction)
+- **Warmup**: 1 query discarded before timing
+- **Timing**: `CFAbsoluteTimeGetCurrent()` wall-clock, averaged over all queries
 
 ```bash
 xcodebuild test -scheme swift-hnsw -configuration Release ENABLE_TESTABILITY=YES -only-testing SwiftHNSWTests/ANNBenchmarks
