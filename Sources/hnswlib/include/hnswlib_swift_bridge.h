@@ -161,7 +161,7 @@ HNSWSpaceHandle hnsw_create_turboquant_l2_space(
 );
 void hnsw_turboquant_set_mode(HNSWSpaceHandle space, int mode);
 
-// Finalize: convert all stored float vectors to packed quantized format in-place.
+// Finalize: convert stored float vectors to packed quantized, then repack memory.
 // Call AFTER all vectors are added, BEFORE searching.
 void hnsw_turboquant_finalize(
     HNSWIndexHandle index,

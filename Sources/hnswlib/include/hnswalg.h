@@ -655,6 +655,42 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         max_elements_ = new_max_elements;
     }
 
+    /// Repack data_level0_memory_ with a smaller data_size.
+    /// Copies links and labels intact, shrinks the data portion.
+    /// Used after TurboQuant finalize to reclaim memory from Float32 → packed conversion.
+    void repackData(size_t new_data_size) {
+        size_t cur_count = cur_element_count.load();
+        size_t old_size_per = size_data_per_element_;
+        size_t new_size_per = size_links_level0_ + new_data_size + sizeof(labeltype);
+
+        char *new_mem = (char *)malloc(max_elements_ * new_size_per);
+        if (new_mem == nullptr)
+            throw std::runtime_error("Not enough memory: repackData");
+
+        for (size_t i = 0; i < cur_count; i++) {
+            char *old_elem = data_level0_memory_ + i * old_size_per;
+            char *new_elem = new_mem + i * new_size_per;
+
+            // Copy links (unchanged, at offset 0)
+            memcpy(new_elem, old_elem, size_links_level0_);
+
+            // Copy data (only new_data_size bytes from old data region)
+            memcpy(new_elem + size_links_level0_,
+                   old_elem + offsetData_, new_data_size);
+
+            // Copy label
+            memcpy(new_elem + size_links_level0_ + new_data_size,
+                   old_elem + label_offset_, sizeof(labeltype));
+        }
+
+        free(data_level0_memory_);
+        data_level0_memory_ = new_mem;
+        data_size_ = new_data_size;
+        size_data_per_element_ = new_size_per;
+        offsetData_ = size_links_level0_;
+        label_offset_ = size_links_level0_ + new_data_size;
+    }
+
     size_t indexFileSize() const {
         size_t size = 0;
         size += sizeof(offsetLevel0_);
