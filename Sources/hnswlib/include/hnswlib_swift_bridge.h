@@ -160,6 +160,7 @@ HNSWSpaceHandle hnsw_create_turboquant_l2_space(
     int num_centroids
 );
 void hnsw_turboquant_set_mode(HNSWSpaceHandle space, int mode);
+void hnsw_turboquant_set_data_size(HNSWSpaceHandle space, size_t new_data_size);
 
 // Finalize: convert stored float vectors to packed quantized, then repack memory.
 // Call AFTER all vectors are added, BEFORE searching.

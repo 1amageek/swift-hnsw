@@ -706,6 +706,15 @@ void hnsw_turboquant_set_mode(HNSWSpaceHandle space, int mode) {
 }
 
 
+void hnsw_turboquant_set_data_size(HNSWSpaceHandle space, size_t new_data_size) {
+    if (!space) return;
+    try {
+        auto* sp = static_cast<TurboQuantL2Space*>(space);
+        sp->setDataSize(new_data_size);
+    } catch (...) {
+    }
+}
+
 void hnsw_turboquant_finalize(HNSWIndexHandle index, TurboQuantEncoderHandle encoder) {
     if (!index || !encoder) return;
     try {

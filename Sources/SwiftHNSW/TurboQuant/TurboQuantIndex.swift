@@ -155,6 +155,7 @@ public final class TurboQuantIndex: @unchecked Sendable {
         lock.withWriteLock {
             if !_finalized {
                 hnsw_turboquant_finalize(index, encoder)
+                hnsw_turboquant_set_data_size(space, _packedSize)
                 hnsw_turboquant_set_mode(space, 1)
                 _finalized = true
             }
@@ -214,6 +215,7 @@ public final class TurboQuantIndex: @unchecked Sendable {
         lock.withWriteLock {
             if !_finalized {
                 hnsw_turboquant_finalize(index, encoder)
+                hnsw_turboquant_set_data_size(space, _packedSize)
                 hnsw_turboquant_set_mode(space, 1)
                 _finalized = true
             }
@@ -300,7 +302,7 @@ public final class TurboQuantIndex: @unchecked Sendable {
 
         let packedSize = hnsw_tq_encoder_packed_size(encoder)
 
-        // Create space with packed_size as data_size (already finalized)
+        // Create space and set data_size to packed_size (already finalized)
         guard let space = quantizer.centroids.withUnsafeBufferPointer({ buf in
             hnsw_create_turboquant_l2_space(
                 dimensions, p, Int32(bitWidth),
@@ -309,6 +311,7 @@ public final class TurboQuantIndex: @unchecked Sendable {
             hnsw_tq_encoder_destroy(encoder)
             throw HNSWError.loadFailed("Failed to create space")
         }
+        hnsw_turboquant_set_data_size(space, packedSize)
 
         // Load HNSW index from the data after the header
         let hnswData = data.dropFirst(headerSize)

@@ -37,6 +37,10 @@ public:
     void* get_dist_func_param() override { return &params_; }
 
     void setMode(int mode) { params_.mode = mode; }
+
+    /// Update data_size after finalize/repack to match packed format.
+    /// This ensures load_from_buffer reads the correct data_size.
+    void setDataSize(size_t new_data_size) { data_size_ = new_data_size; }
 };
 
 } // namespace hnswlib
