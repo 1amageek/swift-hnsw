@@ -715,8 +715,8 @@ void hnsw_turboquant_set_data_size(HNSWSpaceHandle space, size_t new_data_size) 
     }
 }
 
-void hnsw_turboquant_finalize(HNSWIndexHandle index, TurboQuantEncoderHandle encoder) {
-    if (!index || !encoder) return;
+bool hnsw_turboquant_finalize(HNSWIndexHandle index, TurboQuantEncoderHandle encoder) {
+    if (!index || !encoder) return false;
     try {
         auto* idx = static_cast<HierarchicalNSW<float>*>(index);
         size_t count = idx->getCurrentElementCount();
@@ -733,7 +733,9 @@ void hnsw_turboquant_finalize(HNSWIndexHandle index, TurboQuantEncoderHandle enc
 
         // Step 2: Repack memory to reclaim space (p*4 → packed_size per vector)
         idx->repackData(packed_size);
+        return true;
     } catch (...) {
+        return false;
     }
 }
 

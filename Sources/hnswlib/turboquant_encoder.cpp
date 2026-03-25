@@ -427,7 +427,7 @@ void hnsw_tq_encoder_rotate_query_batch(
     auto* enc = static_cast<TurboQuantEncoder*>(encoder);
     size_t d = enc->dimension;
     for (size_t i = 0; i < count; i++) {
-        rotate_query_single(enc, inputs + i * d, outputs + i * d);
+        rotate_query_single(enc, inputs + i * d, outputs + i * enc->padded_dim);
     }
 }
 

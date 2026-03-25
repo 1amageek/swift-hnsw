@@ -39,6 +39,9 @@ public final class TurboQuantIndex: @unchecked Sendable {
         configuration: HNSWConfiguration = .balanced,
         seed: UInt64 = 42
     ) throws {
+        guard dimensions > 0 else {
+            throw HNSWError.initializationFailed("dimensions must be positive")
+        }
         guard (1...4).contains(bitWidth) else {
             throw HNSWError.initializationFailed("bitWidth must be 1, 2, 3, or 4")
         }
@@ -161,9 +164,11 @@ public final class TurboQuantIndex: @unchecked Sendable {
 
         // Ensure finalized (write lock only on first search)
         if !lock.withReadLock({ _finalized }) {
-            lock.withWriteLock {
+            try lock.withWriteLock {
                 if !_finalized {
-                    hnsw_turboquant_finalize(index, encoder)
+                    guard hnsw_turboquant_finalize(index, encoder) else {
+                        throw HNSWError.serializationFailed("Finalization failed (out of memory)")
+                    }
                     hnsw_turboquant_set_data_size(space, _packedSize)
                     hnsw_turboquant_set_mode(space, 1)
                     _finalized = true
@@ -207,9 +212,11 @@ public final class TurboQuantIndex: @unchecked Sendable {
 
     public func save(to path: String) throws {
         // Auto-finalize if needed
-        lock.withWriteLock {
+        try lock.withWriteLock {
             if !_finalized {
-                hnsw_turboquant_finalize(index, encoder)
+                guard hnsw_turboquant_finalize(index, encoder) else {
+                    throw HNSWError.serializationFailed("Finalization failed (out of memory)")
+                }
                 hnsw_turboquant_set_data_size(space, _packedSize)
                 hnsw_turboquant_set_mode(space, 1)
                 _finalized = true
@@ -353,13 +360,13 @@ public final class TurboQuantIndex: @unchecked Sendable {
 extension Data {
     mutating func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
         var le = value.littleEndian
-        append(UnsafeBufferPointer(start: &le, count: 1))
+        Swift.withUnsafeBytes(of: &le) { self.append(contentsOf: $0) }
     }
 
     func readLittleEndian<T: FixedWidthInteger>(at offset: inout Int) -> T {
         let size = MemoryLayout<T>.size
         let value = withUnsafeBytes { buf in
-            buf.load(fromByteOffset: offset, as: T.self)
+            buf.loadUnaligned(fromByteOffset: offset, as: T.self)
         }
         offset += size
         return T(littleEndian: value)

@@ -164,7 +164,8 @@ void hnsw_turboquant_set_data_size(HNSWSpaceHandle space, size_t new_data_size);
 
 // Finalize: convert stored float vectors to packed quantized, then repack memory.
 // Call AFTER all vectors are added, BEFORE searching.
-void hnsw_turboquant_finalize(
+// Returns false if finalization fails (e.g. out of memory during repack).
+bool hnsw_turboquant_finalize(
     HNSWIndexHandle index,
     TurboQuantEncoderHandle encoder
 );
