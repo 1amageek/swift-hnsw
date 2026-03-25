@@ -105,7 +105,7 @@ public final class TurboQuantIndex: @unchecked Sendable {
     public var count: Int { lock.withReadLock { Int(hnsw_get_current_count(index)) } }
     public var capacity: Int { lock.withReadLock { Int(hnsw_get_max_elements(index)) } }
     public var isEmpty: Bool { count == 0 }
-    public var isFinalized: Bool { _finalized }
+    public var isFinalized: Bool { lock.withReadLock { _finalized } }
     public var bytesPerVector: Int { _packedSize }
     public var compressionRatio: Float { Float(dimensions * 4) / Float(_packedSize) }
 
@@ -118,9 +118,6 @@ public final class TurboQuantIndex: @unchecked Sendable {
     /// Add a vector. Must be called BEFORE searching.
     /// Internally: normalize → HD³ rotate to p dims → store as Float32[p].
     public func add(_ vector: [Float], label: UInt64) throws {
-        guard !_finalized else {
-            throw HNSWError.addPointFailed("Cannot add after finalize()")
-        }
         guard vector.count == dimensions else {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: vector.count)
         }
@@ -134,6 +131,9 @@ public final class TurboQuantIndex: @unchecked Sendable {
         }
 
         try lock.withWriteLock {
+            guard !_finalized else {
+                throw HNSWError.addPointFailed("Cannot add after finalize()")
+            }
             hnsw_turboquant_set_mode(space, 0)
             let success = rotated.withUnsafeBufferPointer { buf in
                 hnsw_add_point(index, buf.baseAddress!, label)
@@ -152,16 +152,7 @@ public final class TurboQuantIndex: @unchecked Sendable {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: query.count)
         }
 
-        lock.withWriteLock {
-            if !_finalized {
-                hnsw_turboquant_finalize(index, encoder)
-                hnsw_turboquant_set_data_size(space, _packedSize)
-                hnsw_turboquant_set_mode(space, 1)
-                _finalized = true
-            }
-        }
-
-        // Normalize + rotate query → p floats (full precision for ADC)
+        // Normalize + rotate query outside lock (CPU-intensive, no shared state)
         var rotated = [Float](repeating: 0, count: paddedDimensions)
         query.withUnsafeBufferPointer { qBuf in
             rotated.withUnsafeMutableBufferPointer { rBuf in
@@ -169,7 +160,15 @@ public final class TurboQuantIndex: @unchecked Sendable {
             }
         }
 
-        return lock.withReadLock {
+        // Finalize (if needed) and search in a single lock scope — no gap
+        return try lock.withWriteLock {
+            if !_finalized {
+                hnsw_turboquant_finalize(index, encoder)
+                hnsw_turboquant_set_data_size(space, _packedSize)
+                hnsw_turboquant_set_mode(space, 1)
+                _finalized = true
+            }
+
             var labels = [UInt64](repeating: 0, count: k)
             var distances = [Float](repeating: 0, count: k)
 
@@ -190,19 +189,11 @@ public final class TurboQuantIndex: @unchecked Sendable {
 
     // MARK: - Persistence
 
-    /// File header for TurboQuant serialization
-    private struct Header {
-        static let magic: UInt32 = 0x54514857 // "TQHW"
-        static let version: UInt32 = 1
-
-        var magic: UInt32
-        var version: UInt32
-        var dimensions: UInt32
-        var bitWidth: UInt32
-        var seed: UInt64
-        var paddedDimensions: UInt32
-        var reserved: UInt32
-    }
+    private static let headerMagic: UInt32 = 0x54514857 // "TQHW"
+    private static let headerVersion: UInt32 = 1
+    // Header: 28 bytes, field-by-field (no struct padding dependency)
+    // [magic:4][version:4][dimensions:4][bitWidth:4][seed:8][paddedDimensions:4]
+    private static let headerSize = 28
 
     /// Save the finalized index to a file.
     /// The rotation matrix is not stored — it is regenerated from the seed on load.
@@ -221,18 +212,14 @@ public final class TurboQuantIndex: @unchecked Sendable {
             }
         }
 
-        // Write header + HNSW data
-        var header = Header(
-            magic: Header.magic,
-            version: Header.version,
-            dimensions: UInt32(dimensions),
-            bitWidth: UInt32(bitWidth),
-            seed: seed,
-            paddedDimensions: UInt32(paddedDimensions),
-            reserved: 0
-        )
-
-        let headerData = Data(bytes: &header, count: MemoryLayout<Header>.size)
+        // Write header field-by-field (portable, no padding dependency)
+        var headerData = Data(capacity: Self.headerSize)
+        headerData.appendLittleEndian(Self.headerMagic)
+        headerData.appendLittleEndian(Self.headerVersion)
+        headerData.appendLittleEndian(UInt32(dimensions))
+        headerData.appendLittleEndian(UInt32(bitWidth))
+        headerData.appendLittleEndian(seed)
+        headerData.appendLittleEndian(UInt32(paddedDimensions))
 
         // Get HNSW serialized data
         let hnswSize = lock.withReadLock { hnsw_get_serialized_size(index) }
@@ -263,28 +250,27 @@ public final class TurboQuantIndex: @unchecked Sendable {
 
     public static func load(from path: String) throws -> TurboQuantIndex {
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
-        let headerSize = MemoryLayout<Header>.size
 
         guard data.count > headerSize else {
             throw HNSWError.loadFailed("File too small")
         }
 
-        // Read header
-        let header: Header = data.withUnsafeBytes { buf in
-            buf.load(as: Header.self)
-        }
+        // Read header field-by-field (portable)
+        var offset = 0
+        let magic: UInt32 = data.readLittleEndian(at: &offset)
+        let version: UInt32 = data.readLittleEndian(at: &offset)
 
-        guard header.magic == Header.magic else {
+        guard magic == headerMagic else {
             throw HNSWError.loadFailed("Invalid file magic")
         }
-        guard header.version == Header.version else {
-            throw HNSWError.loadFailed("Unsupported version \(header.version)")
+        guard version == headerVersion else {
+            throw HNSWError.loadFailed("Unsupported version \(version)")
         }
 
-        let dimensions = Int(header.dimensions)
-        let bitWidth = Int(header.bitWidth)
-        let seed = header.seed
-        let p = Int(header.paddedDimensions)
+        let dimensions = Int(data.readLittleEndian(at: &offset) as UInt32)
+        let bitWidth = Int(data.readLittleEndian(at: &offset) as UInt32)
+        let seed: UInt64 = data.readLittleEndian(at: &offset)
+        let p = Int(data.readLittleEndian(at: &offset) as UInt32)
 
         // Rebuild encoder from seed (deterministic)
         let quantizer = ScalarQuantizer(bitWidth: bitWidth, dimension: p)
@@ -314,7 +300,7 @@ public final class TurboQuantIndex: @unchecked Sendable {
         hnsw_turboquant_set_data_size(space, packedSize)
 
         // Load HNSW index from the data after the header
-        let hnswData = data.dropFirst(headerSize)
+        let hnswData = data.dropFirst(offset)
         let loadedIndex: HNSWIndexHandle? = hnswData.withUnsafeBytes { ptr in
             hnsw_load_from_buffer(ptr.baseAddress!, hnswData.count, space, 0)
         }
@@ -357,3 +343,22 @@ public final class TurboQuantIndex: @unchecked Sendable {
         self.lock = RWLock()
     }
 }
+
+// MARK: - Data Serialization Helpers
+
+extension Data {
+    mutating func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
+        var le = value.littleEndian
+        append(UnsafeBufferPointer(start: &le, count: 1))
+    }
+
+    func readLittleEndian<T: FixedWidthInteger>(at offset: inout Int) -> T {
+        let size = MemoryLayout<T>.size
+        let value = subdata(in: offset..<offset + size).withUnsafeBytes {
+            $0.load(as: T.self)
+        }
+        offset += size
+        return T(littleEndian: value)
+    }
+}
+

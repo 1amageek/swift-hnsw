@@ -42,7 +42,7 @@ void hnsw_tq_encoder_encode_batch(
 );
 
 /// Rotate a query vector: normalize → HD³ rotate (keep full precision for ADC).
-/// output must have at least `dimension` floats.
+/// output must have at least `padded_dim` floats (use hnsw_tq_encoder_padded_dim).
 void hnsw_tq_encoder_rotate_query(
     TurboQuantEncoderHandle encoder,
     const float* input,

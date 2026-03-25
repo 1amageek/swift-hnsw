@@ -293,42 +293,58 @@ static void pack_indices(const uint8_t* indices, uint8_t* output, size_t count,
 // Full encode pipeline
 // ============================================================
 
+// Max stack allocation threshold: 16KB. Above this, use heap.
+static const size_t ALLOCA_THRESHOLD = 16 * 1024;
+
 static void encode_single(const TurboQuantEncoder* enc, const float* input, uint8_t* output) {
     size_t d = enc->dimension;
     size_t p = enc->padded_dim;
+    size_t total_bytes = d * sizeof(float) + p * sizeof(float) * 2 + p;
+    bool use_heap = total_bytes > ALLOCA_THRESHOLD;
 
-    // Stack allocate work buffers for reasonable dimensions
-    // For very large dims, fall back to heap
-    // All operations use p (padded) coordinates, not d.
-    float* normalized = (float*)alloca(d * sizeof(float));
-    float* work = (float*)alloca(p * sizeof(float));
-    float* rotated = (float*)alloca(p * sizeof(float));
-    uint8_t* indices = (uint8_t*)alloca(p);
+    std::vector<uint8_t> heap_buf;
+    uint8_t* buf;
+    if (use_heap) {
+        heap_buf.resize(total_bytes);
+        buf = heap_buf.data();
+    } else {
+        buf = (uint8_t*)alloca(total_bytes);
+    }
 
-    // 1. Copy and normalize
+    float* normalized = (float*)buf;
+    float* work = (float*)(buf + d * sizeof(float));
+    float* rotated = (float*)(buf + d * sizeof(float) + p * sizeof(float));
+    uint8_t* indices = buf + d * sizeof(float) + p * sizeof(float) * 2;
+
     memcpy(normalized, input, d * sizeof(float));
     normalize_inplace(normalized, d);
-
-    // 2. HD³ rotate (outputs p coordinates)
     hd3_rotate(enc, normalized, rotated, work);
 
-    // 3. Scalar quantize all p coordinates
     const float* bounds = enc->boundaries.data();
     int n_bounds = (int)enc->boundaries.size();
     for (size_t j = 0; j < p; j++) {
         indices[j] = quantize_scalar(rotated[j], bounds, n_bounds);
     }
-
-    // 4. Pack all p indices
     pack_indices(indices, output, p, enc->bits, enc->packed_size);
 }
 
 static void rotate_query_single(const TurboQuantEncoder* enc, const float* input, float* output) {
     size_t d = enc->dimension;
     size_t p = enc->padded_dim;
+    size_t total_bytes = d * sizeof(float) + p * sizeof(float);
+    bool use_heap = total_bytes > ALLOCA_THRESHOLD;
 
-    float* normalized = (float*)alloca(d * sizeof(float));
-    float* work = (float*)alloca(p * sizeof(float));
+    std::vector<uint8_t> heap_buf;
+    uint8_t* buf;
+    if (use_heap) {
+        heap_buf.resize(total_bytes);
+        buf = heap_buf.data();
+    } else {
+        buf = (uint8_t*)alloca(total_bytes);
+    }
+
+    float* normalized = (float*)buf;
+    float* work = (float*)(buf + d * sizeof(float));
 
     memcpy(normalized, input, d * sizeof(float));
     normalize_inplace(normalized, d);
@@ -427,7 +443,15 @@ void hnsw_tq_encoder_quantize_rotated(TurboQuantEncoderHandle encoder,
                                        const float* rotated_input, uint8_t* output) {
     auto* enc = static_cast<TurboQuantEncoder*>(encoder);
     size_t p = enc->padded_dim;
-    uint8_t* indices = (uint8_t*)alloca(p);
+
+    std::vector<uint8_t> heap_buf;
+    uint8_t* indices;
+    if (p > ALLOCA_THRESHOLD) {
+        heap_buf.resize(p);
+        indices = heap_buf.data();
+    } else {
+        indices = (uint8_t*)alloca(p);
+    }
 
     const float* bounds = enc->boundaries.data();
     int n_bounds = (int)enc->boundaries.size();

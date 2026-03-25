@@ -219,58 +219,6 @@ static float TurboQuantL2_Distance(const void* pVect1v, const void* pVect2v, con
 }
 
 // ============================================================
-// NEON-optimized ADC for 4-bit (ARM64)
-// ============================================================
-
-#if defined(__ARM_NEON__) || defined(__ARM_NEON)
-#include <arm_neon.h>
-
-static float TurboQuantL2_ADC_4bit_NEON(const float* query, const uint8_t* packed,
-                                         const float* codebook, size_t dim) {
-    float32x4_t sum0 = vdupq_n_f32(0.0f);
-    float32x4_t sum1 = vdupq_n_f32(0.0f);
-
-    // Process 8 dimensions at a time (4 packed bytes = 8 nibbles)
-    size_t i = 0;
-    for (; i + 8 <= dim; i += 8) {
-        // Load 4 packed bytes containing 8 nibbles
-        uint8_t b0 = packed[i / 2];
-        uint8_t b1 = packed[i / 2 + 1];
-        uint8_t b2 = packed[i / 2 + 2];
-        uint8_t b3 = packed[i / 2 + 3];
-
-        // Extract indices and lookup centroids
-        float32x4_t c_lo = {codebook[b0 >> 4], codebook[b0 & 0x0F],
-                            codebook[b1 >> 4], codebook[b1 & 0x0F]};
-        float32x4_t c_hi = {codebook[b2 >> 4], codebook[b2 & 0x0F],
-                            codebook[b3 >> 4], codebook[b3 & 0x0F]};
-
-        float32x4_t q_lo = vld1q_f32(query + i);
-        float32x4_t q_hi = vld1q_f32(query + i + 4);
-
-        float32x4_t d_lo = vsubq_f32(q_lo, c_lo);
-        float32x4_t d_hi = vsubq_f32(q_hi, c_hi);
-
-        sum0 = vfmaq_f32(sum0, d_lo, d_lo);
-        sum1 = vfmaq_f32(sum1, d_hi, d_hi);
-    }
-
-    sum0 = vaddq_f32(sum0, sum1);
-    float result = vaddvq_f32(sum0);
-
-    // Handle remaining dimensions
-    for (; i < dim; i++) {
-        float c = codebook[extract_index_4bit(packed, i)];
-        float d = query[i] - c;
-        result += d * d;
-    }
-
-    return result;
-}
-
-#endif // __ARM_NEON
-
-// ============================================================
 // Constructor
 // ============================================================
 

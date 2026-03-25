@@ -15,13 +15,13 @@ struct TurboQuantParams {
     int mode;               // 0 = float L2 (construction), 1 = ADC (search after finalize)
 };
 
-/// L2 distance space for TurboQuant quantized vectors.
+/// L2 distance space for TurboQuant.
 ///
 /// Supports two modes:
-/// - Symmetric (mode=0): both arguments are packed quantized bytes.
-///   Used during index construction.
-/// - Asymmetric/ADC (mode=1): first argument is a rotated float query (d floats),
-///   second argument is packed quantized bytes. Used during search.
+/// - mode=0 (construction): both arguments are Float32 rotated vectors.
+///   Exact L2 distance for high-quality graph construction.
+/// - mode=1 (search, after finalize): first argument is a rotated float query,
+///   second argument is packed quantized bytes. Asymmetric Distance Computation (ADC).
 class TurboQuantL2Space : public SpaceInterface<float> {
     DISTFUNC<float> fstdistfunc_;
     size_t data_size_;
