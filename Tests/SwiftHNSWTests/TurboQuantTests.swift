@@ -323,6 +323,74 @@ struct TurboQuantIndexTests {
         let recall = totalRecall / Double(numQueries)
         #expect(recall > 0.70, "d=768 b=4 recall should exceed 70%, got \(recall)")
     }
+
+    @Test("Serialization roundtrip")
+    func serializationRoundtrip() throws {
+        let dim = 128
+        let n = 100
+        let k = 5
+
+        let index = try TurboQuantIndex(
+            dimensions: dim, maxElements: n, bitWidth: 4,
+            configuration: HNSWConfiguration(m: 16, efConstruction: 100), seed: 42)
+        let vectors = (0..<n).map { _ in (0..<dim).map { _ in Float.random(in: -1...1) } }
+        for (i, v) in vectors.enumerated() { try index.add(v, label: UInt64(i)) }
+
+        let query = (0..<dim).map { _ in Float.random(in: -1...1) }
+        let resultsBefore = try index.search(query, k: k)
+
+        // Save
+        let tmpPath = NSTemporaryDirectory() + "tq_test_\(UUID().uuidString).bin"
+        try index.save(to: tmpPath)
+        defer { try? FileManager.default.removeItem(atPath: tmpPath) }
+
+        let fileSize = try FileManager.default.attributesOfItem(atPath: tmpPath)[.size] as! Int
+        #expect(fileSize > 0)
+
+        // Load
+        let loaded = try TurboQuantIndex.load(from: tmpPath)
+        #expect(loaded.dimensions == dim)
+        #expect(loaded.bitWidth == 4)
+        #expect(loaded.paddedDimensions == 128)
+        #expect(loaded.count == n)
+        #expect(loaded.isFinalized)
+
+        // Search loaded index — should return same results
+        let resultsAfter = try loaded.search(query, k: k)
+        #expect(resultsAfter.count == k)
+
+        // Same labels in same order
+        let labelsBefore = resultsBefore.map { $0.label }
+        let labelsAfter = resultsAfter.map { $0.label }
+        #expect(labelsBefore == labelsAfter, "Search results should match after load")
+    }
+
+    @Test("Serialization roundtrip non-power-of-2")
+    func serializationNonPow2() throws {
+        let dim = 768
+        let n = 50
+        let k = 5
+
+        let index = try TurboQuantIndex(
+            dimensions: dim, maxElements: n, bitWidth: 4,
+            configuration: HNSWConfiguration(m: 8, efConstruction: 50), seed: 99)
+        for i in 0..<n {
+            try index.add((0..<dim).map { _ in Float.random(in: -1...1) }, label: UInt64(i))
+        }
+
+        let tmpPath = NSTemporaryDirectory() + "tq_test768_\(UUID().uuidString).bin"
+        try index.save(to: tmpPath)
+        defer { try? FileManager.default.removeItem(atPath: tmpPath) }
+
+        let loaded = try TurboQuantIndex.load(from: tmpPath)
+        #expect(loaded.dimensions == 768)
+        #expect(loaded.paddedDimensions == 1024)
+        #expect(loaded.count == n)
+
+        let query = (0..<dim).map { _ in Float.random(in: -1...1) }
+        let results = try loaded.search(query, k: k)
+        #expect(results.count == k)
+    }
 }
 
 // MARK: - Helpers

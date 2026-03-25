@@ -26,9 +26,9 @@ public final class TurboQuantIndex: @unchecked Sendable {
     private let space: HNSWSpaceHandle
     private let index: HNSWIndexHandle
     private let encoder: TurboQuantEncoderHandle
-    private let lock = RWLock()
+    private let lock: RWLock
     private let _packedSize: Int
-    private var _finalized = false
+    private var _finalized: Bool
 
     // MARK: - Initialization
 
@@ -89,6 +89,8 @@ public final class TurboQuantIndex: @unchecked Sendable {
             throw HNSWError.initializationFailed("Failed to create index")
         }
         self.index = index
+        self.lock = RWLock()
+        self._finalized = false
         hnsw_set_ef(index, configuration.efSearch)
     }
 
@@ -183,5 +185,172 @@ public final class TurboQuantIndex: @unchecked Sendable {
                 SearchResult(label: labels[i], distance: distances[i])
             }
         }
+    }
+
+    // MARK: - Persistence
+
+    /// File header for TurboQuant serialization
+    private struct Header {
+        static let magic: UInt32 = 0x54514857 // "TQHW"
+        static let version: UInt32 = 1
+
+        var magic: UInt32
+        var version: UInt32
+        var dimensions: UInt32
+        var bitWidth: UInt32
+        var seed: UInt64
+        var paddedDimensions: UInt32
+        var reserved: UInt32
+    }
+
+    /// Save the finalized index to a file.
+    /// The rotation matrix is not stored — it is regenerated from the seed on load.
+    public func save(to url: URL) throws {
+        try save(to: url.path)
+    }
+
+    public func save(to path: String) throws {
+        // Auto-finalize if needed
+        lock.withWriteLock {
+            if !_finalized {
+                hnsw_turboquant_finalize(index, encoder)
+                hnsw_turboquant_set_mode(space, 1)
+                _finalized = true
+            }
+        }
+
+        // Write header + HNSW data
+        var header = Header(
+            magic: Header.magic,
+            version: Header.version,
+            dimensions: UInt32(dimensions),
+            bitWidth: UInt32(bitWidth),
+            seed: seed,
+            paddedDimensions: UInt32(paddedDimensions),
+            reserved: 0
+        )
+
+        let headerData = Data(bytes: &header, count: MemoryLayout<Header>.size)
+
+        // Get HNSW serialized data
+        let hnswSize = lock.withReadLock { hnsw_get_serialized_size(index) }
+        guard hnswSize > 0 else {
+            throw HNSWError.serializationFailed("Failed to get serialized size")
+        }
+
+        var hnswData = Data(count: hnswSize)
+        let success = lock.withReadLock {
+            hnswData.withUnsafeMutableBytes { ptr in
+                hnsw_serialize_to_buffer(index, ptr.baseAddress!, hnswSize)
+            }
+        }
+        guard success else {
+            throw HNSWError.serializationFailed("Failed to serialize HNSW data")
+        }
+
+        var output = headerData
+        output.append(hnswData)
+        try output.write(to: URL(fileURLWithPath: path))
+    }
+
+    /// Load a finalized index from a file.
+    /// The index is ready for search immediately after loading.
+    public static func load(from url: URL) throws -> TurboQuantIndex {
+        try load(from: url.path)
+    }
+
+    public static func load(from path: String) throws -> TurboQuantIndex {
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let headerSize = MemoryLayout<Header>.size
+
+        guard data.count > headerSize else {
+            throw HNSWError.loadFailed("File too small")
+        }
+
+        // Read header
+        let header: Header = data.withUnsafeBytes { buf in
+            buf.load(as: Header.self)
+        }
+
+        guard header.magic == Header.magic else {
+            throw HNSWError.loadFailed("Invalid file magic")
+        }
+        guard header.version == Header.version else {
+            throw HNSWError.loadFailed("Unsupported version \(header.version)")
+        }
+
+        let dimensions = Int(header.dimensions)
+        let bitWidth = Int(header.bitWidth)
+        let seed = header.seed
+        let p = Int(header.paddedDimensions)
+
+        // Rebuild encoder from seed (deterministic)
+        let quantizer = ScalarQuantizer(bitWidth: bitWidth, dimension: p)
+
+        guard let encoder = quantizer.centroids.withUnsafeBufferPointer({ cBuf in
+            quantizer.boundaries.withUnsafeBufferPointer({ bBuf in
+                hnsw_tq_encoder_create(
+                    dimensions, Int32(bitWidth),
+                    cBuf.baseAddress!, Int32(quantizer.numCentroids),
+                    bBuf.baseAddress!, Int32(quantizer.boundaries.count), seed)
+            })
+        }) else {
+            throw HNSWError.loadFailed("Failed to recreate encoder")
+        }
+
+        let packedSize = hnsw_tq_encoder_packed_size(encoder)
+
+        // Create space with packed_size as data_size (already finalized)
+        guard let space = quantizer.centroids.withUnsafeBufferPointer({ buf in
+            hnsw_create_turboquant_l2_space(
+                dimensions, p, Int32(bitWidth),
+                buf.baseAddress!, Int32(quantizer.numCentroids))
+        }) else {
+            hnsw_tq_encoder_destroy(encoder)
+            throw HNSWError.loadFailed("Failed to create space")
+        }
+
+        // Load HNSW index from the data after the header
+        let hnswData = data.dropFirst(headerSize)
+        let loadedIndex: HNSWIndexHandle? = hnswData.withUnsafeBytes { ptr in
+            hnsw_load_from_buffer(ptr.baseAddress!, hnswData.count, space, 0)
+        }
+
+        guard let loadedIndex else {
+            hnsw_destroy_space(space)
+            hnsw_tq_encoder_destroy(encoder)
+            throw HNSWError.loadFailed("Failed to load HNSW data")
+        }
+
+        // Set ADC mode (already finalized)
+        hnsw_turboquant_set_mode(space, 1)
+
+        let index = TurboQuantIndex(
+            dimensions: dimensions, bitWidth: bitWidth, seed: seed,
+            paddedDimensions: p, packedSize: packedSize,
+            space: space, index: loadedIndex, encoder: encoder,
+            configuration: .balanced, finalized: true
+        )
+        return index
+    }
+
+    /// Private initializer for loading
+    private init(
+        dimensions: Int, bitWidth: Int, seed: UInt64,
+        paddedDimensions: Int, packedSize: Int,
+        space: HNSWSpaceHandle, index: HNSWIndexHandle, encoder: TurboQuantEncoderHandle,
+        configuration: HNSWConfiguration, finalized: Bool
+    ) {
+        self.dimensions = dimensions
+        self.bitWidth = bitWidth
+        self.seed = seed
+        self.paddedDimensions = paddedDimensions
+        self._packedSize = packedSize
+        self.space = space
+        self.index = index
+        self.encoder = encoder
+        self.configuration = configuration
+        self._finalized = finalized
+        self.lock = RWLock()
     }
 }
