@@ -678,4 +678,53 @@ bool hnsw_get_vector_f16(
     }
 }
 
+// ============================================================
+// TurboQuant Support
+// ============================================================
+
+HNSWSpaceHandle hnsw_create_turboquant_l2_space(
+    size_t dim,
+    size_t padded_dim,
+    int bits,
+    const float* codebook,
+    int num_centroids
+) {
+    try {
+        return new TurboQuantL2Space(dim, padded_dim, bits, codebook, num_centroids);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+void hnsw_turboquant_set_mode(HNSWSpaceHandle space, int mode) {
+    if (!space) return;
+    try {
+        auto* sp = static_cast<TurboQuantL2Space*>(space);
+        sp->setMode(mode);
+    } catch (...) {
+    }
+}
+
+
+void hnsw_turboquant_finalize(HNSWIndexHandle index, TurboQuantEncoderHandle encoder) {
+    if (!index || !encoder) return;
+    try {
+        auto* idx = static_cast<HierarchicalNSW<float>*>(index);
+        size_t count = idx->getCurrentElementCount();
+        size_t packed_size = hnsw_tq_encoder_packed_size(encoder);
+
+        // Heap-allocate temp buffer (avoid stack overflow for large dims)
+        std::vector<uint8_t> packed(packed_size);
+
+        for (size_t i = 0; i < count; i++) {
+            char* data = idx->getDataByInternalId(static_cast<tableint>(i));
+            const float* floats = reinterpret_cast<const float*>(data);
+
+            hnsw_tq_encoder_quantize_rotated(encoder, floats, packed.data());
+            memcpy(data, packed.data(), packed_size);
+        }
+    } catch (...) {
+    }
+}
+
 } // extern "C"

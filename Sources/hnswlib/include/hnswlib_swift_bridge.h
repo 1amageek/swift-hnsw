@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "turboquant_encoder.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -145,6 +146,28 @@ bool hnsw_get_vector_f16(
     uint16_t* output,
     size_t dimension
 );
+
+// ============================================================
+// TurboQuant Support
+// ============================================================
+
+// TurboQuant Space functions
+HNSWSpaceHandle hnsw_create_turboquant_l2_space(
+    size_t dim,
+    size_t padded_dim,
+    int bits,
+    const float* codebook,
+    int num_centroids
+);
+void hnsw_turboquant_set_mode(HNSWSpaceHandle space, int mode);
+
+// Finalize: convert all stored float vectors to packed quantized format in-place.
+// Call AFTER all vectors are added, BEFORE searching.
+void hnsw_turboquant_finalize(
+    HNSWIndexHandle index,
+    TurboQuantEncoderHandle encoder
+);
+
 
 #ifdef __cplusplus
 }

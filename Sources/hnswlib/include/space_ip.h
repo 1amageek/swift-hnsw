@@ -339,6 +339,89 @@ InnerProductDistanceSIMD4ExtResiduals(const void *pVect1v, const void *pVect2v, 
 }
 #endif
 
+// ============================================================
+// ARM NEON Implementation
+// ============================================================
+#if defined(__ARM_NEON__) || defined(__ARM_NEON)
+#include <arm_neon.h>
+
+static float
+InnerProductSIMD16ExtNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    const float *pVect1 = (const float *)pVect1v;
+    const float *pVect2 = (const float *)pVect2v;
+    size_t qty = *((size_t *)qty_ptr);
+    size_t qty16 = qty >> 4;
+    const float *pEnd1 = pVect1 + (qty16 << 4);
+
+    float32x4_t sum0 = vdupq_n_f32(0);
+    float32x4_t sum1 = vdupq_n_f32(0);
+    float32x4_t sum2 = vdupq_n_f32(0);
+    float32x4_t sum3 = vdupq_n_f32(0);
+
+    while (pVect1 < pEnd1) {
+        sum0 = vfmaq_f32(sum0, vld1q_f32(pVect1), vld1q_f32(pVect2));
+        pVect1 += 4; pVect2 += 4;
+        sum1 = vfmaq_f32(sum1, vld1q_f32(pVect1), vld1q_f32(pVect2));
+        pVect1 += 4; pVect2 += 4;
+        sum2 = vfmaq_f32(sum2, vld1q_f32(pVect1), vld1q_f32(pVect2));
+        pVect1 += 4; pVect2 += 4;
+        sum3 = vfmaq_f32(sum3, vld1q_f32(pVect1), vld1q_f32(pVect2));
+        pVect1 += 4; pVect2 += 4;
+    }
+    return vaddvq_f32(vaddq_f32(vaddq_f32(sum0, sum1), vaddq_f32(sum2, sum3)));
+}
+
+static float
+InnerProductDistanceSIMD16ExtNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    return 1.0f - InnerProductSIMD16ExtNEON(pVect1v, pVect2v, qty_ptr);
+}
+
+static float
+InnerProductSIMD4ExtNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    const float *pVect1 = (const float *)pVect1v;
+    const float *pVect2 = (const float *)pVect2v;
+    size_t qty = *((size_t *)qty_ptr);
+    size_t qty4 = qty >> 2;
+    const float *pEnd1 = pVect1 + (qty4 << 2);
+
+    float32x4_t sum = vdupq_n_f32(0);
+    while (pVect1 < pEnd1) {
+        sum = vfmaq_f32(sum, vld1q_f32(pVect1), vld1q_f32(pVect2));
+        pVect1 += 4; pVect2 += 4;
+    }
+    return vaddvq_f32(sum);
+}
+
+static float
+InnerProductDistanceSIMD4ExtNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    return 1.0f - InnerProductSIMD4ExtNEON(pVect1v, pVect2v, qty_ptr);
+}
+
+static float
+InnerProductDistanceSIMD16ExtResidualsNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    size_t qty = *((size_t *)qty_ptr);
+    size_t qty16 = qty >> 4 << 4;
+    float res = InnerProductSIMD16ExtNEON(pVect1v, pVect2v, &qty16);
+    size_t qty_left = qty - qty16;
+    float res_tail = InnerProduct((const float *)pVect1v + qty16, (const float *)pVect2v + qty16, &qty_left);
+    return 1.0f - (res + res_tail);
+}
+
+static float
+InnerProductDistanceSIMD4ExtResidualsNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    size_t qty = *((size_t *)qty_ptr);
+    size_t qty4 = qty >> 2 << 2;
+    float res = InnerProductSIMD4ExtNEON(pVect1v, pVect2v, &qty4);
+    size_t qty_left = qty - qty4;
+    float res_tail = InnerProduct((const float *)pVect1v + qty4, (const float *)pVect2v + qty4, &qty_left);
+    return 1.0f - (res + res_tail);
+}
+
+#ifndef USE_NEON
+#define USE_NEON 1
+#endif
+#endif  // ARM NEON
+
 class InnerProductSpace : public SpaceInterface<float> {
     DISTFUNC<float> fstdistfunc_;
     size_t data_size_;
@@ -377,6 +460,15 @@ class InnerProductSpace : public SpaceInterface<float> {
             fstdistfunc_ = InnerProductDistanceSIMD16ExtResiduals;
         else if (dim > 4)
             fstdistfunc_ = InnerProductDistanceSIMD4ExtResiduals;
+#elif USE_NEON
+        if (dim % 16 == 0)
+            fstdistfunc_ = InnerProductDistanceSIMD16ExtNEON;
+        else if (dim % 4 == 0)
+            fstdistfunc_ = InnerProductDistanceSIMD4ExtNEON;
+        else if (dim > 16)
+            fstdistfunc_ = InnerProductDistanceSIMD16ExtResidualsNEON;
+        else if (dim > 4)
+            fstdistfunc_ = InnerProductDistanceSIMD4ExtResidualsNEON;
 #endif
         dim_ = dim;
         data_size_ = dim * sizeof(float);

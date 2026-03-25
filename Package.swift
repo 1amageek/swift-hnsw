@@ -22,7 +22,9 @@ let package = Package(
             path: "Sources/hnswlib",
             sources: [
                 "hnswlib_swift_bridge.cpp",
-                "space_f16.cpp"
+                "space_f16.cpp",
+                "space_turboquant.cpp",
+                "turboquant_encoder.cpp"
             ],
             publicHeadersPath: "include",
             cxxSettings: [

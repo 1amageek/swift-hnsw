@@ -205,6 +205,80 @@ L2SqrSIMD4ExtResiduals(const void *pVect1v, const void *pVect2v, const void *qty
 }
 #endif
 
+// ============================================================
+// ARM NEON Implementation
+// ============================================================
+#if defined(__ARM_NEON__) || defined(__ARM_NEON)
+#include <arm_neon.h>
+
+static float
+L2SqrSIMD16ExtNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    const float *pVect1 = (const float *)pVect1v;
+    const float *pVect2 = (const float *)pVect2v;
+    size_t qty = *((size_t *)qty_ptr);
+    size_t qty16 = qty >> 4;
+    const float *pEnd1 = pVect1 + (qty16 << 4);
+
+    float32x4_t sum0 = vdupq_n_f32(0);
+    float32x4_t sum1 = vdupq_n_f32(0);
+
+    while (pVect1 < pEnd1) {
+        float32x4_t d0 = vsubq_f32(vld1q_f32(pVect1), vld1q_f32(pVect2));
+        sum0 = vfmaq_f32(sum0, d0, d0); pVect1 += 4; pVect2 += 4;
+        float32x4_t d1 = vsubq_f32(vld1q_f32(pVect1), vld1q_f32(pVect2));
+        sum1 = vfmaq_f32(sum1, d1, d1); pVect1 += 4; pVect2 += 4;
+        float32x4_t d2 = vsubq_f32(vld1q_f32(pVect1), vld1q_f32(pVect2));
+        sum0 = vfmaq_f32(sum0, d2, d2); pVect1 += 4; pVect2 += 4;
+        float32x4_t d3 = vsubq_f32(vld1q_f32(pVect1), vld1q_f32(pVect2));
+        sum1 = vfmaq_f32(sum1, d3, d3); pVect1 += 4; pVect2 += 4;
+    }
+    return vaddvq_f32(vaddq_f32(sum0, sum1));
+}
+
+static float
+L2SqrSIMD4ExtNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    const float *pVect1 = (const float *)pVect1v;
+    const float *pVect2 = (const float *)pVect2v;
+    size_t qty = *((size_t *)qty_ptr);
+    size_t qty4 = qty >> 2;
+    const float *pEnd1 = pVect1 + (qty4 << 2);
+
+    float32x4_t sum = vdupq_n_f32(0);
+    while (pVect1 < pEnd1) {
+        float32x4_t d = vsubq_f32(vld1q_f32(pVect1), vld1q_f32(pVect2));
+        sum = vfmaq_f32(sum, d, d);
+        pVect1 += 4; pVect2 += 4;
+    }
+    return vaddvq_f32(sum);
+}
+
+static float
+L2SqrSIMD16ExtResidualsNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    size_t qty = *((size_t *)qty_ptr);
+    size_t qty16 = qty >> 4 << 4;
+    float res = L2SqrSIMD16ExtNEON(pVect1v, pVect2v, &qty16);
+    size_t qty_left = qty - qty16;
+    float res_tail = L2Sqr((const float *)pVect1v + qty16, (const float *)pVect2v + qty16, &qty_left);
+    return res + res_tail;
+}
+
+static float
+L2SqrSIMD4ExtResidualsNEON(const void *pVect1v, const void *pVect2v, const void *qty_ptr) {
+    size_t qty = *((size_t *)qty_ptr);
+    size_t qty4 = qty >> 2 << 2;
+    float res = L2SqrSIMD4ExtNEON(pVect1v, pVect2v, &qty4);
+    size_t qty_left = qty - qty4;
+    float res_tail = L2Sqr((const float *)pVect1v + qty4, (const float *)pVect2v + qty4, &qty_left);
+    return res + res_tail;
+}
+
+#define USE_NEON 1
+#endif  // ARM NEON
+
+// ============================================================
+// ARM NEON Inner Product (for InnerProductSpace, defined in space_ip.h)
+// ============================================================
+
 class L2Space : public SpaceInterface<float> {
     DISTFUNC<float> fstdistfunc_;
     size_t data_size_;
@@ -232,6 +306,15 @@ class L2Space : public SpaceInterface<float> {
             fstdistfunc_ = L2SqrSIMD16ExtResiduals;
         else if (dim > 4)
             fstdistfunc_ = L2SqrSIMD4ExtResiduals;
+#elif USE_NEON
+        if (dim % 16 == 0)
+            fstdistfunc_ = L2SqrSIMD16ExtNEON;
+        else if (dim % 4 == 0)
+            fstdistfunc_ = L2SqrSIMD4ExtNEON;
+        else if (dim > 16)
+            fstdistfunc_ = L2SqrSIMD16ExtResidualsNEON;
+        else if (dim > 4)
+            fstdistfunc_ = L2SqrSIMD4ExtResidualsNEON;
 #endif
         dim_ = dim;
         data_size_ = dim * sizeof(float);
