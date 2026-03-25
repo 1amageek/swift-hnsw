@@ -134,7 +134,6 @@ public final class TurboQuantIndex: @unchecked Sendable {
             guard !_finalized else {
                 throw HNSWError.addPointFailed("Cannot add after finalize()")
             }
-            hnsw_turboquant_set_mode(space, 0)
             let success = rotated.withUnsafeBufferPointer { buf in
                 hnsw_add_point(index, buf.baseAddress!, label)
             }
@@ -160,15 +159,20 @@ public final class TurboQuantIndex: @unchecked Sendable {
             }
         }
 
-        // Finalize (if needed) and search in a single lock scope — no gap
-        return try lock.withWriteLock {
-            if !_finalized {
-                hnsw_turboquant_finalize(index, encoder)
-                hnsw_turboquant_set_data_size(space, _packedSize)
-                hnsw_turboquant_set_mode(space, 1)
-                _finalized = true
+        // Ensure finalized (write lock only on first search)
+        if !lock.withReadLock({ _finalized }) {
+            lock.withWriteLock {
+                if !_finalized {
+                    hnsw_turboquant_finalize(index, encoder)
+                    hnsw_turboquant_set_data_size(space, _packedSize)
+                    hnsw_turboquant_set_mode(space, 1)
+                    _finalized = true
+                }
             }
+        }
 
+        // Search under read lock (concurrent reads OK)
+        return lock.withReadLock {
             var labels = [UInt64](repeating: 0, count: k)
             var distances = [Float](repeating: 0, count: k)
 
@@ -354,8 +358,8 @@ extension Data {
 
     func readLittleEndian<T: FixedWidthInteger>(at offset: inout Int) -> T {
         let size = MemoryLayout<T>.size
-        let value = subdata(in: offset..<offset + size).withUnsafeBytes {
-            $0.load(as: T.self)
+        let value = withUnsafeBytes { buf in
+            buf.load(fromByteOffset: offset, as: T.self)
         }
         offset += size
         return T(littleEndian: value)
