@@ -6,9 +6,10 @@ A high-performance Swift wrapper for [hnswlib](https://github.com/nmslib/hnswlib
 
 - **Fast ANN Search**: Sub-millisecond approximate nearest neighbor queries
 - **Float16 Support**: Native half-precision for 50% memory reduction
+- **TurboQuant**: 4-bit vector quantization with HD³ rotation for 6-8x memory compression
 - **Multiple Distance Metrics**: L2 (Euclidean), Inner Product, and Cosine similarity
 - **Thread-Safe**: Concurrent read access with RWLock synchronization
-- **SIMD Optimized**: ARM NEON / x86 AVX acceleration for both Float32 and Float16
+- **SIMD Optimized**: ARM NEON / x86 AVX acceleration for Float32, Float16, and TurboQuant
 - **Batch Operations**: Efficient bulk add and search operations
 - **Persistence**: Save and load indexes to/from disk
 - **Swift 6 Ready**: Full Sendable conformance for modern concurrency
@@ -321,59 +322,70 @@ await withTaskGroup(of: [SearchResult].self) { group in
 
 ## Benchmarks
 
-Run the included benchmarks:
+Measured on Apple Silicon with Release build (`-Os`, NEON SIMD enabled).
 
 ```bash
-swift test --filter ANNBenchmarks
+xcodebuild test -scheme swift-hnsw -configuration Release ENABLE_TESTABILITY=YES -only-testing SwiftHNSWTests/ANNBenchmarks
 ```
 
 ### Recall vs QPS Trade-off (128-dim, 10K vectors)
 
 | efSearch | Recall@10 | QPS | Latency |
 |----------|-----------|-----|---------|
-| 10 | 28.0% | 8,823 | 0.11ms |
-| 20 | 42.8% | 5,369 | 0.19ms |
-| 40 | 61.9% | 3,097 | 0.32ms |
-| 80 | 78.8% | 1,781 | 0.56ms |
-| 160 | 91.8% | 1,008 | 0.99ms |
-| 320 | 98.1% | 605 | 1.65ms |
+| 10 | 28.2% | 112,493 | 0.009ms |
+| 20 | 44.8% | 48,828 | 0.020ms |
+| 40 | 63.1% | 31,980 | 0.031ms |
+| 80 | 80.7% | 18,215 | 0.055ms |
+| 160 | 92.7% | 9,839 | 0.102ms |
+| 320 | 98.1% | 5,544 | 0.180ms |
 
 ### Scale Performance (128-dim, M=16, efConstruction=200, efSearch=100)
 
 | Vectors | Build Time | Build Rate | Search QPS | Latency | Index Size |
 |---------|------------|------------|------------|---------|------------|
-| 1,000 | 0.5s | 2,029/s | 2,798 | 0.36ms | 750 KB |
-| 5,000 | 6.0s | 836/s | 1,622 | 0.62ms | 3.7 MB |
-| 10,000 | 16.3s | 614/s | 1,348 | 0.74ms | 7.3 MB |
-| 20,000 | 41.1s | 486/s | 1,341 | 0.75ms | 14.6 MB |
-| 50,000 | 123.7s | 404/s | 1,180 | 0.85ms | 36.6 MB |
+| 1,000 | 0.05s | 21,359/s | 27,840 | 0.036ms | 750 KB |
+| 5,000 | 0.48s | 10,430/s | 16,978 | 0.059ms | 3.7 MB |
+| 10,000 | 1.23s | 8,145/s | 16,239 | 0.062ms | 7.3 MB |
+| 20,000 | 3.31s | 6,041/s | 14,384 | 0.070ms | 14.6 MB |
+| 50,000 | 10.77s | 4,642/s | 8,087 | 0.124ms | 36.6 MB |
 
 ### Float16 vs Float32 (384-dim, 10K vectors)
 
 | Metric | Float32 | Float16 | Comparison |
 |--------|---------|---------|------------|
 | Vector Memory | 14.6 MB | 7.3 MB | **50% smaller** |
-| Build Time | 40.7s | 45.4s | 0.90x |
-| Search QPS | 636 | 575 | 0.90x |
-| Search Latency | 1.57ms | 1.74ms | 0.90x |
-| Recall@10 | 67.9% | 68.2% | **Same** |
+| Build Time | 2.85s | 2.79s | 1.02x |
+| Search QPS | 7,222 | 8,641 | **1.20x faster** |
+| Search Latency | 0.138ms | 0.116ms | 1.20x |
+| Recall@10 | 69.7% | 69.9% | **Same** |
+
+### TurboQuant Recall vs QPS (128-dim, 5K vectors)
+
+| Algorithm | efSearch | Recall@10 | QPS | Memory | Compression |
+|-----------|----------|-----------|-----|--------|-------------|
+| Float32 | 100 | 89.5% | 18,041 | 2.4 MB | 1.0x |
+| Float32 | 320 | 99.7% | 7,121 | 2.4 MB | 1.0x |
+| TQ-4bit | 100 | 75.3% | 9,501 | 312 KB | **8.0x** |
+| TQ-4bit | 320 | 80.9% | 4,184 | 312 KB | **8.0x** |
+| TQ-2bit | 100 | 44.9% | 11,893 | 156 KB | **16.0x** |
+| TQ-2bit | 320 | 47.5% | 5,103 | 156 KB | **16.0x** |
 
 ### Distance Metrics (128-dim, 5K vectors)
 
 | Metric | Build Time | Search QPS | Latency |
 |--------|------------|------------|---------|
-| L2 (Euclidean) | 5.87s | 1,646 | 0.61ms |
-| Inner Product | 4.89s | 1,797 | 0.56ms |
-| Cosine | 4.53s | 1,782 | 0.56ms |
+| L2 (Euclidean) | 0.48s | 18,004 | 0.056ms |
+| Inner Product | 0.44s | 17,788 | 0.056ms |
+| Cosine | 0.44s | 17,024 | 0.059ms |
 
 ### Concurrent Read Scaling (128-dim, 10K vectors)
 
 | Threads | Total QPS | Per-Thread QPS | Speedup |
 |---------|-----------|----------------|---------|
-| 1 | 1,453 | 1,453 | 1.0x |
-| 2 | 1,579 | 789 | 1.09x |
-| 4 | 2,827 | 707 | 1.95x |
-| 8 | 4,544 | 568 | 3.13x |
+| 1 | 16,059 | 16,059 | 1.0x |
+| 2 | 24,325 | 12,163 | 1.51x |
+| 4 | 29,227 | 7,307 | 1.82x |
+| 8 | 32,674 | 4,084 | 2.03x |
 
 ## Error Handling
 
