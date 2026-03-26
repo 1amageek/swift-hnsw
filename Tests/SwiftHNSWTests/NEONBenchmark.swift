@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import SwiftHNSW
 
-@Suite("Benchmarks", .serialized)
+@Suite("Benchmarks", .serialized, .enabled(if: ProcessInfo.processInfo.environment["BENCHMARK"] != nil))
 struct Benchmarks {
 
     @Test("Float32 / Float16 / TurboQuant comparison")

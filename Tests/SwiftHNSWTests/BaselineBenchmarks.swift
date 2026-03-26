@@ -132,7 +132,7 @@ struct EfSearchResult {
 
 // MARK: - Benchmark Suite
 
-@Suite("Baseline Benchmarks", .serialized)
+@Suite("Baseline Benchmarks", .serialized, .enabled(if: ProcessInfo.processInfo.environment["BENCHMARK"] != nil))
 struct BaselineBenchmarks {
 
     static let n = 10_000

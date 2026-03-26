@@ -117,7 +117,7 @@ func findParetoFrontier(_ points: [BenchmarkPoint]) -> [BenchmarkPoint] {
 
 // MARK: - ANN Benchmarks Suite
 
-@Suite("ANN Benchmarks", .serialized)
+@Suite("ANN Benchmarks", .serialized, .enabled(if: ProcessInfo.processInfo.environment["BENCHMARK"] != nil))
 struct ANNBenchmarks {
 
     // MARK: - HNSW Recall vs QPS Benchmark
@@ -679,6 +679,96 @@ struct ANNBenchmarks {
         }
 
         print(String(repeating: "-", count: 80))
+    }
+
+    // MARK: - TurboQuant Recall vs QPS
+
+    @Test("TurboQuant Recall vs QPS")
+    func turboQuantBenchmark() throws {
+        let n = 5_000
+        let d = 128
+        let k = 10
+        let queries = 100
+
+        print("\n")
+        print(String(repeating: "=", count: 95))
+        print("TurboQuant Benchmark: Recall vs QPS (d=\(d), n=\(n))")
+        print(String(repeating: "=", count: 95))
+
+        print("\n[1/2] Generating data...")
+        let trainVectors = randomVectors(count: n, dimension: d)
+        let testQueries = randomVectors(count: queries, dimension: d)
+
+        // Cosine ground truth (TurboQuant normalizes internally)
+        print("[2/2] Computing ground truth (cosine)...")
+        let groundTruths: [[UInt64]] = testQueries.map { query in
+            let normQ = query.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
+            return trainVectors.enumerated().map { (i, v) in
+                let normV = v.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
+                var dot: Float = 0
+                for j in 0..<d { dot += query[j] * v[j] }
+                return (UInt64(i), 1.0 - dot / (normQ * normV))
+            }.sorted { $0.1 < $1.1 }.prefix(k).map { $0.0 }
+        }
+
+        let efSearchValues = [10, 20, 50, 100, 200, 320]
+
+        // Also compute L2 ground truth for Float32 baseline
+        let groundTruthsL2 = computeGroundTruth(trainVectors: trainVectors, testQueries: testQueries, k: k)
+
+        print("\n" + String(repeating: "-", count: 95))
+        print("| \(pad("Algorithm", 14)) | \(pad("efSearch", 8)) | \(pad("Recall@10", 10)) | \(pad("QPS", 10)) | \(pad("Latency", 12)) | \(pad("Build(s)", 10)) | \(pad("Memory", 10)) |")
+        print(String(repeating: "-", count: 95))
+
+        // --- Float32 baseline ---
+        let f32BuildStart = CFAbsoluteTimeGetCurrent()
+        let f32Index = try HNSWIndex<Float>(
+            dimensions: d, maxElements: n, metric: .l2,
+            configuration: HNSWConfiguration(m: 16, efConstruction: 200)
+        )
+        for (i, v) in trainVectors.enumerated() { try f32Index.add(v, label: UInt64(i)) }
+        let f32BuildTime = CFAbsoluteTimeGetCurrent() - f32BuildStart
+        let f32Mem = formatSize(n * d * 4)
+
+        for ef in efSearchValues {
+            f32Index.setEfSearch(ef)
+            _ = try f32Index.search(testQueries[0], k: k)
+            let t = CFAbsoluteTimeGetCurrent()
+            var results: [[SearchResult]] = []
+            for q in testQueries { results.append(try f32Index.search(q, k: k)) }
+            let elapsed = CFAbsoluteTimeGetCurrent() - t
+            let recall = calculateAverageRecall(results: results, groundTruths: groundTruthsL2, k: k)
+            let qps = Double(queries) / elapsed
+            let latency = (elapsed / Double(queries)) * 1000
+            print("| \(pad("Float32", 14)) | \(pad(String(ef), 8)) | \(pad(formatDouble(recall * 100, decimals: 1) + "%", 10)) | \(pad(formatDouble(qps, decimals: 0), 10)) | \(pad(formatDouble(latency, decimals: 3) + "ms", 12)) | \(pad(formatDouble(f32BuildTime, decimals: 2), 10)) | \(pad(f32Mem, 10)) |")
+        }
+
+        // --- TurboQuant 4-bit ---
+        for bitWidth in [4, 2] {
+            let tqBuildStart = CFAbsoluteTimeGetCurrent()
+            let tqIndex = try TurboQuantIndex(
+                dimensions: d, maxElements: n, bitWidth: bitWidth,
+                configuration: HNSWConfiguration(m: 16, efConstruction: 200), seed: 42
+            )
+            for (i, v) in trainVectors.enumerated() { try tqIndex.add(v, label: UInt64(i)) }
+            let tqBuildTime = CFAbsoluteTimeGetCurrent() - tqBuildStart
+            let tqMem = formatSize(n * tqIndex.bytesPerVector)
+
+            for ef in efSearchValues {
+                tqIndex.setEfSearch(ef)
+                _ = try tqIndex.search(testQueries[0], k: k)
+                let t = CFAbsoluteTimeGetCurrent()
+                var results: [[SearchResult]] = []
+                for q in testQueries { results.append(try tqIndex.search(q, k: k)) }
+                let elapsed = CFAbsoluteTimeGetCurrent() - t
+                let recall = calculateAverageRecall(results: results, groundTruths: groundTruths, k: k)
+                let qps = Double(queries) / elapsed
+                let latency = (elapsed / Double(queries)) * 1000
+                print("| \(pad("TQ-\(bitWidth)bit", 14)) | \(pad(String(ef), 8)) | \(pad(formatDouble(recall * 100, decimals: 1) + "%", 10)) | \(pad(formatDouble(qps, decimals: 0), 10)) | \(pad(formatDouble(latency, decimals: 3) + "ms", 12)) | \(pad(formatDouble(tqBuildTime, decimals: 2), 10)) | \(pad(tqMem, 10)) |")
+            }
+        }
+
+        print(String(repeating: "-", count: 95))
     }
 
     // MARK: - Concurrent Read Test
