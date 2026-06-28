@@ -1,3 +1,7 @@
+#if defined(__wasi__) || defined(__wasm__)
+extern "C" void hnswlib_wasm_unavailable_space_f16(void) {}
+#else
+
 #include "include/space_f16.h"
 #include <cstring>
 
@@ -594,3 +598,5 @@ InnerProductSpaceF16::InnerProductSpaceF16(size_t dim) : dim_(dim) {
 }
 
 } // namespace hnswlib
+
+#endif

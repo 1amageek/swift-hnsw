@@ -783,7 +783,7 @@ struct ANNBenchmarks {
 
         print("\n")
         print(String(repeating: "=", count: 70))
-        print("Concurrent Read Performance (RWLock)")
+        print("Concurrent Read Performance (backend lock)")
         print("n=\(n), d=\(d), k=\(k), queries/thread=\(queriesPerThread)")
         print(String(repeating: "=", count: 70))
 
@@ -810,14 +810,15 @@ struct ANNBenchmarks {
         for threadCount in threadCounts {
             let start = CFAbsoluteTimeGetCurrent()
 
-            await withTaskGroup(of: Void.self) { group in
+            try await withThrowingTaskGroup(of: Void.self) { group in
                 for _ in 0..<threadCount {
                     group.addTask {
                         for query in testQueries {
-                            _ = try? index.search(query, k: k)
+                            _ = try index.search(query, k: k)
                         }
                     }
                 }
+                try await group.waitForAll()
             }
 
             let elapsed = CFAbsoluteTimeGetCurrent() - start

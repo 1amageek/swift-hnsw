@@ -1,3 +1,7 @@
+#if defined(__wasi__) || defined(__wasm__)
+extern "C" void hnswlib_wasm_unavailable_space_turboquant(void) {}
+#else
+
 #include "include/space_turboquant.h"
 #include <cstring>
 
@@ -242,3 +246,5 @@ TurboQuantL2Space::TurboQuantL2Space(size_t dim, size_t padded_dim, int bits,
 }
 
 } // namespace hnswlib
+
+#endif

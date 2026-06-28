@@ -473,6 +473,6 @@ func findProjectRoot() -> String {
             return url.path
         }
     }
-    // Fallback
+    // Default directory
     return FileManager.default.currentDirectoryPath
 }

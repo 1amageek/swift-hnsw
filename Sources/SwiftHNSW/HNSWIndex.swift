@@ -1,9 +1,11 @@
 import Foundation
+import Synchronization
+#if HNSWLIB_BACKEND && canImport(hnswlib)
 import hnswlib
 
 /// HNSW Index for approximate nearest neighbor search
 /// Generic over scalar type (Float or Float16)
-public final class HNSWIndex<Scalar: HNSWScalar>: @unchecked Sendable {
+public final class HNSWIndex<Scalar: HNSWNativeScalar>: Sendable {
 
     // MARK: - Properties
 
@@ -16,9 +18,29 @@ public final class HNSWIndex<Scalar: HNSWScalar>: @unchecked Sendable {
     /// Index configuration
     public let configuration: HNSWConfiguration
 
-    private let space: HNSWSpaceHandle
-    private let index: HNSWIndexHandle
-    private let lock = RWLock()
+    private struct CxxState: Sendable {
+        let spaceAddress: UInt
+        let indexAddress: UInt
+        var vectorScratch: [Scalar]
+        var batchScratch: [Scalar]
+
+        init(space: HNSWSpaceHandle, index: HNSWIndexHandle) {
+            self.spaceAddress = UInt(bitPattern: space)
+            self.indexAddress = UInt(bitPattern: index)
+            self.vectorScratch = []
+            self.batchScratch = []
+        }
+
+        var space: HNSWSpaceHandle {
+            UnsafeMutableRawPointer(bitPattern: spaceAddress)!
+        }
+
+        var index: HNSWIndexHandle {
+            UnsafeMutableRawPointer(bitPattern: indexAddress)!
+        }
+    }
+
+    private let state: Mutex<CxxState>
 
     // MARK: - Initialization
 
@@ -41,7 +63,6 @@ public final class HNSWIndex<Scalar: HNSWScalar>: @unchecked Sendable {
         guard let space = metric.createSpace(dimensions: dimensions, scalar: Scalar.self) else {
             throw HNSWError.initializationFailed("Failed to create distance space")
         }
-        self.space = space
 
         guard let index = hnsw_create_index(
             space,
@@ -54,8 +75,8 @@ public final class HNSWIndex<Scalar: HNSWScalar>: @unchecked Sendable {
             hnsw_destroy_space(space)
             throw HNSWError.initializationFailed("Failed to create HNSW index")
         }
-        self.index = index
         hnsw_set_ef(index, configuration.efSearch)
+        self.state = Mutex(CxxState(space: space, index: index))
     }
 
     /// Private initializer for loading from file
@@ -69,28 +90,29 @@ public final class HNSWIndex<Scalar: HNSWScalar>: @unchecked Sendable {
         self.dimensions = dimensions
         self.metric = metric
         self.configuration = configuration
-        self.space = space
-        self.index = index
+        self.state = Mutex(CxxState(space: space, index: index))
     }
 
     deinit {
-        hnsw_destroy_index(index)
-        hnsw_destroy_space(space)
+        state.withLock { state in
+            hnsw_destroy_index(state.index)
+            hnsw_destroy_space(state.space)
+        }
     }
 
     // MARK: - Count & Capacity
 
     /// Current number of elements in the index
     public var count: Int {
-        lock.withReadLock {
-            Int(hnsw_get_current_count(index))
+        state.withLock { state in
+            Int(hnsw_get_current_count(state.index))
         }
     }
 
     /// Maximum number of elements the index can hold
     public var capacity: Int {
-        lock.withReadLock {
-            Int(hnsw_get_max_elements(index))
+        state.withLock { state in
+            Int(hnsw_get_max_elements(state.index))
         }
     }
 
@@ -102,16 +124,16 @@ public final class HNSWIndex<Scalar: HNSWScalar>: @unchecked Sendable {
     /// Set the ef parameter for search
     /// - Parameter ef: Higher values improve recall but increase search time
     public func setEfSearch(_ ef: Int) {
-        lock.withWriteLock {
-            hnsw_set_ef(index, ef)
+        state.withLock { state in
+            hnsw_set_ef(state.index, ef)
         }
     }
 
     /// Resize the index to accommodate more elements
     /// - Parameter newCapacity: New maximum capacity
     public func resize(to newCapacity: Int) throws {
-        try lock.withWriteLock {
-            guard hnsw_resize_index(index, newCapacity) else {
+        try state.withLock { state in
+            guard hnsw_resize_index(state.index, newCapacity) else {
                 throw HNSWError.addPointFailed("Failed to resize index to \(newCapacity)")
             }
         }
@@ -127,15 +149,29 @@ extension HNSWIndex {
     ///   - vector: The vector to add
     ///   - label: Unique identifier for this vector
     public func add(_ vector: [Scalar], label: UInt64) throws {
+        try vector.withUnsafeBufferPointer { buffer in
+            try add(buffer, label: label)
+        }
+    }
+
+    /// Add a borrowed vector to the index without materializing an intermediate array.
+    ///
+    /// The index copies the vector into its owned storage or native backend during this call.
+    /// The caller retains ownership of the provided memory after the method returns.
+    public func add(_ vector: UnsafeBufferPointer<Scalar>, label: UInt64) throws {
         try validateDimensions(vector.count)
 
-        let processedVector = metric.requiresNormalization
-            ? normalizeVector(vector)
-            : vector
-
-        try lock.withWriteLock {
-            let success = processedVector.withUnsafeBufferPointer { buffer in
-                Scalar.addPoint(index, data: buffer.baseAddress!, label: label)
+        try state.withLock { state in
+            let success: Bool
+            if metric.requiresNormalization {
+                let index = state.index
+                ensureCapacity(&state.vectorScratch, count: dimensions)
+                success = state.vectorScratch.withUnsafeMutableBufferPointer { scratch in
+                    normalizeVector(vector, into: scratch)
+                    return Scalar.addPoint(index, data: scratch.baseAddress!, label: label)
+                }
+            } else {
+                success = Scalar.addPoint(state.index, data: vector.baseAddress!, label: label)
             }
             guard success else {
                 throw HNSWError.addPointFailed("Failed to add point with label \(label)")
@@ -149,41 +185,35 @@ extension HNSWIndex {
     ///   - k: Number of nearest neighbors to find
     /// - Returns: Array of search results sorted by distance (closest first)
     public func search(_ query: [Scalar], k: Int) throws -> [SearchResult] {
+        try query.withUnsafeBufferPointer { buffer in
+            try search(buffer, k: k)
+        }
+    }
+
+    /// Search with a borrowed query vector without materializing an intermediate array.
+    public func search(_ query: UnsafeBufferPointer<Scalar>, k: Int) throws -> [SearchResult] {
         try validateDimensions(query.count)
+        guard k > 0 else { return [] }
 
-        let processedQuery = metric.requiresNormalization
-            ? normalizeVector(query)
-            : query
-
-        return lock.withReadLock {
-            var labels = [UInt64](repeating: 0, count: k)
-            var distances = [Float](repeating: 0, count: k)
-
-            let resultCount = processedQuery.withUnsafeBufferPointer { queryBuffer in
-                labels.withUnsafeMutableBufferPointer { labelsBuffer in
-                    distances.withUnsafeMutableBufferPointer { distancesBuffer in
-                        Scalar.searchKnn(
-                            index,
-                            query: queryBuffer.baseAddress!,
-                            k: Int32(k),
-                            labels: labelsBuffer.baseAddress!,
-                            distances: distancesBuffer.baseAddress!
-                        )
-                    }
+        return state.withLock { state in
+            if metric.requiresNormalization {
+                let index = state.index
+                ensureCapacity(&state.vectorScratch, count: dimensions)
+                return state.vectorScratch.withUnsafeMutableBufferPointer { scratch in
+                    normalizeVector(query, into: scratch)
+                    let normalized = UnsafeBufferPointer(start: scratch.baseAddress, count: scratch.count)
+                    return searchNormalized(normalized, k: k, index: index)
                 }
             }
-
-            return (0..<Int(resultCount)).map { i in
-                SearchResult(label: labels[i], distance: distances[i])
-            }
+            return searchNormalized(query, k: k, index: state.index)
         }
     }
 
     /// Mark an element as deleted
     /// - Parameter label: The label of the element to delete
     public func markDeleted(label: UInt64) throws {
-        try lock.withWriteLock {
-            guard hnsw_mark_deleted(index, label) else {
+        try state.withLock { state in
+            guard hnsw_mark_deleted(state.index, label) else {
                 throw HNSWError.deleteFailed("Failed to delete element with label \(label)")
             }
         }
@@ -192,8 +222,8 @@ extension HNSWIndex {
     /// Unmark a deleted element
     /// - Parameter label: The label of the element to restore
     public func unmarkDeleted(label: UInt64) throws {
-        try lock.withWriteLock {
-            guard hnsw_unmark_deleted(index, label) else {
+        try state.withLock { state in
+            guard hnsw_unmark_deleted(state.index, label) else {
                 throw HNSWError.deleteFailed("Failed to undelete element with label \(label)")
             }
         }
@@ -211,25 +241,50 @@ extension HNSWIndex {
     /// - Returns: Number of successfully added points
     @discardableResult
     public func addBatch(_ vectors: [Scalar], labels: [UInt64]) throws -> Int {
+        try vectors.withUnsafeBufferPointer { vectorBuffer in
+            try labels.withUnsafeBufferPointer { labelBuffer in
+                try addBatch(vectorBuffer, labels: labelBuffer)
+            }
+        }
+    }
+
+    /// Add borrowed contiguous vectors to the index.
+    ///
+    /// `vectors` must contain `labels.count * dimensions` scalars in row-major order.
+    @discardableResult
+    public func addBatch(
+        _ vectors: UnsafeBufferPointer<Scalar>,
+        labels: UnsafeBufferPointer<UInt64>
+    ) throws -> Int {
         let numVectors = labels.count
+        guard numVectors > 0 else { return 0 }
         try validateDimensions(vectors.count, expectedTotal: numVectors * dimensions)
 
-        let processedVectors = metric.requiresNormalization
-            ? normalizeVectorsBatch(vectors, count: numVectors, dimensions: dimensions)
-            : vectors
-
-        return lock.withWriteLock {
-            Int(processedVectors.withUnsafeBufferPointer { vectorsBuffer in
-                labels.withUnsafeBufferPointer { labelsBuffer in
-                    Scalar.addPointsBatch(
+        return state.withLock { state in
+            let added: Int32
+            if metric.requiresNormalization {
+                let index = state.index
+                ensureCapacity(&state.batchScratch, count: vectors.count)
+                added = state.batchScratch.withUnsafeMutableBufferPointer { scratch in
+                    normalizeVectorsBatch(vectors, count: numVectors, dimensions: dimensions, into: scratch)
+                    return Scalar.addPointsBatch(
                         index,
-                        data: vectorsBuffer.baseAddress!,
-                        labels: labelsBuffer.baseAddress!,
+                        data: scratch.baseAddress!,
+                        labels: labels.baseAddress!,
                         numPoints: numVectors,
                         dimension: dimensions
                     )
                 }
-            })
+            } else {
+                added = Scalar.addPointsBatch(
+                    state.index,
+                    data: vectors.baseAddress!,
+                    labels: labels.baseAddress!,
+                    numPoints: numVectors,
+                    dimension: dimensions
+                )
+            }
+            return Int(added)
         }
     }
 
@@ -246,10 +301,12 @@ extension HNSWIndex {
         }
 
         let start = startingLabel ?? UInt64(count)
-        let labels = (0..<vectors.count).map { start + UInt64($0) }
-        let flattened = vectors.flatMap { $0 }
-
-        return try addBatch(flattened, labels: labels)
+        var addedCount = 0
+        for index in vectors.indices {
+            try add(vectors[index], label: start + UInt64(index))
+            addedCount += 1
+        }
+        return addedCount
     }
 
     /// Search for k nearest neighbors for multiple queries
@@ -259,42 +316,61 @@ extension HNSWIndex {
     ///   - k: Number of nearest neighbors per query
     /// - Returns: Array of search results for each query
     public func searchBatch(_ queries: [Scalar], numQueries: Int, k: Int) throws -> [[SearchResult]] {
+        try queries.withUnsafeBufferPointer { buffer in
+            try searchBatch(buffer, numQueries: numQueries, k: k)
+        }
+    }
+
+    /// Search borrowed contiguous query vectors.
+    ///
+    /// `queries` must contain `numQueries * dimensions` scalars in row-major order.
+    public func searchBatch(
+        _ queries: UnsafeBufferPointer<Scalar>,
+        numQueries: Int,
+        k: Int
+    ) throws -> [[SearchResult]] {
         try validateDimensions(queries.count, expectedTotal: numQueries * dimensions)
+        guard numQueries > 0 else { return [] }
+        guard k > 0 else { return Array(repeating: [], count: numQueries) }
 
-        let processedQueries = metric.requiresNormalization
-            ? normalizeVectorsBatch(queries, count: numQueries, dimensions: dimensions)
-            : queries
-
-        return lock.withReadLock {
+        return state.withLock { state in
             var labels = [UInt64](repeating: 0, count: numQueries * k)
             var distances = [Float](repeating: 0, count: numQueries * k)
 
-            processedQueries.withUnsafeBufferPointer { queriesBuffer in
-                labels.withUnsafeMutableBufferPointer { labelsBuffer in
-                    distances.withUnsafeMutableBufferPointer { distancesBuffer in
-                        _ = Scalar.searchKnnBatch(
-                            index,
-                            queries: queriesBuffer.baseAddress!,
-                            numQueries: numQueries,
-                            dimension: dimensions,
-                            k: Int32(k),
-                            labels: labelsBuffer.baseAddress!,
-                            distances: distancesBuffer.baseAddress!
-                        )
-                    }
+            let resultCounts: Int32
+            if metric.requiresNormalization {
+                let index = state.index
+                ensureCapacity(&state.batchScratch, count: queries.count)
+                resultCounts = state.batchScratch.withUnsafeMutableBufferPointer { scratch in
+                    normalizeVectorsBatch(queries, count: numQueries, dimensions: dimensions, into: scratch)
+                    let normalized = UnsafeBufferPointer(start: scratch.baseAddress, count: scratch.count)
+                    return searchBatchNormalized(
+                        normalized,
+                        numQueries: numQueries,
+                        k: k,
+                        labels: &labels,
+                        distances: &distances,
+                        index: index
+                    )
                 }
+            } else {
+                resultCounts = searchBatchNormalized(
+                    queries,
+                    numQueries: numQueries,
+                    k: k,
+                    labels: &labels,
+                    distances: &distances,
+                    index: state.index
+                )
             }
 
-            return (0..<numQueries).map { q in
-                (0..<k).compactMap { i in
-                    let idx = q * k + i
-                    let label = labels[idx]
-                    let distance = distances[idx]
-                    // Filter out empty results (except first which might be valid)
-                    guard i == 0 || label != 0 || distance != 0 else { return nil }
-                    return SearchResult(label: label, distance: distance)
-                }
-            }
+            return buildBatchResults(
+                labels: labels,
+                distances: distances,
+                numQueries: numQueries,
+                k: k,
+                resultCounts: Int(resultCounts)
+            )
         }
     }
 
@@ -309,8 +385,12 @@ extension HNSWIndex {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: queries.first?.count ?? 0)
         }
 
-        let flattened = queries.flatMap { $0 }
-        return try searchBatch(flattened, numQueries: queries.count, k: k)
+        var results: [[SearchResult]] = []
+        results.reserveCapacity(queries.count)
+        for query in queries {
+            results.append(try search(query, k: k))
+        }
+        return results
     }
 }
 
@@ -327,8 +407,8 @@ extension HNSWIndex {
     /// Save the index to a file
     /// - Parameter path: File path to save to
     public func save(to path: String) throws {
-        try lock.withReadLock {
-            guard hnsw_save_index(index, path) else {
+        try state.withLock { state in
+            guard hnsw_save_index(state.index, path) else {
                 throw HNSWError.saveFailed("Failed to save index to \(path)")
             }
         }
@@ -399,6 +479,128 @@ extension HNSWIndex {
             throw HNSWError.dimensionMismatch(expected: expectedTotal, got: got)
         }
     }
+
+    @inline(__always)
+    private func ensureCapacity(_ buffer: inout [Scalar], count: Int) {
+        guard buffer.count != count else { return }
+        buffer = [Scalar](repeating: .zero, count: count)
+    }
+
+    private func normalizeVector(
+        _ input: UnsafeBufferPointer<Scalar>,
+        into output: UnsafeMutableBufferPointer<Scalar>
+    ) {
+        if Scalar.self == Float.self {
+            let inputFloats = UnsafeBufferPointer<Float>(
+                start: UnsafeRawPointer(input.baseAddress!).assumingMemoryBound(to: Float.self),
+                count: input.count
+            )
+            let outputFloats = UnsafeMutableBufferPointer<Float>(
+                start: UnsafeMutableRawPointer(output.baseAddress!).assumingMemoryBound(to: Float.self),
+                count: output.count
+            )
+            VectorOperations.normalize(inputFloats, into: outputFloats)
+        } else {
+            VectorOperations.normalize(input, into: output)
+        }
+    }
+
+    private func normalizeVectorsBatch(
+        _ input: UnsafeBufferPointer<Scalar>,
+        count: Int,
+        dimensions: Int,
+        into output: UnsafeMutableBufferPointer<Scalar>
+    ) {
+        if Scalar.self == Float.self {
+            let inputFloats = UnsafeBufferPointer<Float>(
+                start: UnsafeRawPointer(input.baseAddress!).assumingMemoryBound(to: Float.self),
+                count: input.count
+            )
+            let outputFloats = UnsafeMutableBufferPointer<Float>(
+                start: UnsafeMutableRawPointer(output.baseAddress!).assumingMemoryBound(to: Float.self),
+                count: output.count
+            )
+            VectorOperations.normalizeBatch(inputFloats, count: count, dimensions: dimensions, into: outputFloats)
+        } else {
+            VectorOperations.normalizeBatch(input, count: count, dimensions: dimensions, into: output)
+        }
+    }
+
+    private func searchNormalized(
+        _ query: UnsafeBufferPointer<Scalar>,
+        k: Int,
+        index: HNSWIndexHandle
+    ) -> [SearchResult] {
+        var labels = [UInt64](repeating: 0, count: k)
+        var distances = [Float](repeating: 0, count: k)
+
+        let resultCount = labels.withUnsafeMutableBufferPointer { labelsBuffer in
+            distances.withUnsafeMutableBufferPointer { distancesBuffer in
+                Scalar.searchKnn(
+                    index,
+                    query: query.baseAddress!,
+                    k: Int32(k),
+                    labels: labelsBuffer.baseAddress!,
+                    distances: distancesBuffer.baseAddress!
+                )
+            }
+        }
+
+        var results: [SearchResult] = []
+        results.reserveCapacity(Int(resultCount))
+        for index in 0..<Int(resultCount) {
+            results.append(SearchResult(label: labels[index], distance: distances[index]))
+        }
+        return results
+    }
+
+    private func searchBatchNormalized(
+        _ queries: UnsafeBufferPointer<Scalar>,
+        numQueries: Int,
+        k: Int,
+        labels: inout [UInt64],
+        distances: inout [Float],
+        index: HNSWIndexHandle
+    ) -> Int32 {
+        labels.withUnsafeMutableBufferPointer { labelsBuffer in
+            distances.withUnsafeMutableBufferPointer { distancesBuffer in
+                Scalar.searchKnnBatch(
+                    index,
+                    queries: queries.baseAddress!,
+                    numQueries: numQueries,
+                    dimension: dimensions,
+                    k: Int32(k),
+                    labels: labelsBuffer.baseAddress!,
+                    distances: distancesBuffer.baseAddress!
+                )
+            }
+        }
+    }
+
+    private func buildBatchResults(
+        labels: [UInt64],
+        distances: [Float],
+        numQueries: Int,
+        k: Int,
+        resultCounts: Int
+    ) -> [[SearchResult]] {
+        var output: [[SearchResult]] = []
+        output.reserveCapacity(numQueries)
+        for queryIndex in 0..<numQueries {
+            var queryResults: [SearchResult] = []
+            queryResults.reserveCapacity(k)
+            for resultIndex in 0..<k {
+                let index = queryIndex * k + resultIndex
+                let label = labels[index]
+                let distance = distances[index]
+                guard resultIndex == 0 || label != 0 || distance != 0 else { continue }
+                queryResults.append(SearchResult(label: label, distance: distance))
+            }
+            output.append(queryResults)
+        }
+        _ = resultCounts
+        return output
+    }
 }
 
 // MARK: - Label Operations
@@ -409,8 +611,8 @@ extension HNSWIndex {
     /// - Parameter label: The label to check
     /// - Returns: True if the label exists and is not marked as deleted
     public func contains(label: UInt64) -> Bool {
-        lock.withReadLock {
-            hnsw_contains_label(index, label)
+        state.withLock { state in
+            hnsw_contains_label(state.index, label)
         }
     }
 
@@ -418,10 +620,10 @@ extension HNSWIndex {
     /// - Parameter label: The label to look up
     /// - Returns: The vector if found, nil otherwise
     public func getVector(label: UInt64) -> [Scalar]? {
-        lock.withReadLock {
+        state.withLock { state in
             var output = [Scalar](repeating: .zero, count: dimensions)
             let success = output.withUnsafeMutableBufferPointer { buffer in
-                Scalar.getVector(index, label: label, output: buffer.baseAddress!, dimension: dimensions)
+                Scalar.getVector(state.index, label: label, output: buffer.baseAddress!, dimension: dimensions)
             }
             return success ? output : nil
         }
@@ -429,18 +631,18 @@ extension HNSWIndex {
 
     /// Get all labels currently in the index (excluding deleted elements)
     public var allLabels: [UInt64] {
-        lock.withReadLock {
-            // First get the count
-            let totalCount = hnsw_get_all_labels(index, nil, 0)
+        state.withLock { state in
+            let totalCount = hnsw_get_all_labels(state.index, nil, 0)
             guard totalCount > 0 else { return [] }
 
-            // Then get the labels
             var labels = [UInt64](repeating: 0, count: totalCount)
             let actualCount = labels.withUnsafeMutableBufferPointer { buffer in
-                hnsw_get_all_labels(index, buffer.baseAddress!, totalCount)
+                hnsw_get_all_labels(state.index, buffer.baseAddress!, totalCount)
             }
-
-            return Array(labels.prefix(actualCount))
+            if actualCount < labels.count {
+                labels.removeSubrange(actualCount..<labels.count)
+            }
+            return labels
         }
     }
 }
@@ -452,15 +654,15 @@ extension HNSWIndex {
     /// Serialize the index to Data
     /// - Returns: Serialized index data
     public func serialize() throws -> Data {
-        try lock.withReadLock {
-            let size = hnsw_get_serialized_size(index)
+        try state.withLock { state in
+            let size = hnsw_get_serialized_size(state.index)
             guard size > 0 else {
                 throw HNSWError.serializationFailed("Failed to get serialized size")
             }
 
             var buffer = Data(count: size)
             let success = buffer.withUnsafeMutableBytes { ptr in
-                hnsw_serialize_to_buffer(index, ptr.baseAddress!, size)
+                hnsw_serialize_to_buffer(state.index, ptr.baseAddress!, size)
             }
 
             guard success else {
@@ -507,30 +709,659 @@ extension HNSWIndex {
     }
 }
 
-// MARK: - Vector Normalization Helpers
+#else
+
+/// Swift backend exact vector index with the same public API as the optional hnswlib-backed index.
+public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
+
+    private struct Entry: Sendable {
+        var offset: Int
+        var deleted: Bool
+    }
+
+    private struct State: Sendable {
+        var maximumElementCount: Int
+        var efSearch: Int
+        var entries: [UInt64: Entry]
+        var labelOrder: [UInt64]
+        var vectorStorage: [Scalar]
+        var queryScratch: [Scalar]
+    }
+
+    public let dimensions: Int
+    public let metric: DistanceMetric
+    public let configuration: HNSWConfiguration
+
+    private let state: Mutex<State>
+
+    public init(
+        dimensions: Int,
+        maxElements: Int,
+        metric: DistanceMetric = .l2,
+        configuration: HNSWConfiguration = .balanced
+    ) throws {
+        guard dimensions > 0 else {
+            throw HNSWError.initializationFailed("Dimensions must be positive")
+        }
+        guard maxElements > 0 else {
+            throw HNSWError.initializationFailed("Maximum element count must be positive")
+        }
+        self.dimensions = dimensions
+        self.metric = metric
+        self.configuration = configuration
+        var vectorStorage: [Scalar] = []
+        if maxElements <= Int.max / dimensions {
+            vectorStorage.reserveCapacity(maxElements * dimensions)
+        }
+        self.state = Mutex(State(
+            maximumElementCount: maxElements,
+            efSearch: configuration.efSearch,
+            entries: [:],
+            labelOrder: [],
+            vectorStorage: vectorStorage,
+            queryScratch: [Scalar](repeating: .zero, count: dimensions)
+        ))
+    }
+
+    public var count: Int {
+        state.withLock {
+            $0.entries.count
+        }
+    }
+
+    public var capacity: Int {
+        state.withLock {
+            $0.maximumElementCount
+        }
+    }
+
+    public var isEmpty: Bool { count == 0 }
+
+    public func setEfSearch(_ ef: Int) {
+        state.withLock {
+            $0.efSearch = max(1, ef)
+        }
+    }
+
+    public func resize(to newCapacity: Int) throws {
+        try state.withLock {
+            guard newCapacity >= $0.entries.count else {
+                throw HNSWError.addPointFailed("Cannot resize index below current element count")
+            }
+            $0.maximumElementCount = newCapacity
+        }
+    }
+}
 
 extension HNSWIndex {
 
-    /// Normalize a vector based on the scalar type
-    private func normalizeVector(_ vector: [Scalar]) -> [Scalar] {
-        if Scalar.self == Float.self {
-            return VectorOperations.normalize(vector as! [Float]) as! [Scalar]
-        } else if Scalar.self == Float16.self {
-            return VectorOperations.normalize(vector as! [Float16]) as! [Scalar]
+    public func add(_ vector: [Scalar], label: UInt64) throws {
+        try vector.withUnsafeBufferPointer { buffer in
+            try add(buffer, label: label)
         }
-        return vector
     }
 
-    /// Normalize vectors in batch based on the scalar type
-    private func normalizeVectorsBatch(_ vectors: [Scalar], count: Int, dimensions: Int) -> [Scalar] {
-        if Scalar.self == Float.self {
-            return VectorOperations.normalizeBatch(vectors as! [Float], count: count, dimensions: dimensions) as! [Scalar]
-        } else if Scalar.self == Float16.self {
-            return VectorOperations.normalizeBatch(vectors as! [Float16], count: count, dimensions: dimensions) as! [Scalar]
+    /// Add a borrowed vector to the index without materializing an intermediate array.
+    ///
+    /// The Swift backend stores vectors in an internal contiguous arena. This call performs
+    /// the required ownership copy exactly once and avoids temporary slice arrays.
+    public func add(_ vector: UnsafeBufferPointer<Scalar>, label: UInt64) throws {
+        try validateDimensions(vector.count)
+
+        try state.withLock {
+            try upsertVector(vector, label: label, state: &$0)
         }
-        return vectors
+    }
+
+    public func search(_ query: [Scalar], k: Int) throws -> [SearchResult] {
+        try query.withUnsafeBufferPointer { buffer in
+            try search(buffer, k: k)
+        }
+    }
+
+    /// Search with a borrowed query vector without materializing an intermediate array.
+    public func search(_ query: UnsafeBufferPointer<Scalar>, k: Int) throws -> [SearchResult] {
+        try validateDimensions(query.count)
+        guard k > 0 else { return [] }
+
+        return state.withLock { state in
+            if metric.requiresNormalization {
+                ensureCapacity(&state.queryScratch, count: dimensions)
+                state.queryScratch.withUnsafeMutableBufferPointer { scratch in
+                    normalizeVector(query, into: scratch)
+                }
+                return state.queryScratch.withUnsafeBufferPointer { normalized in
+                    searchNormalized(normalized, k: k, state: state)
+                }
+            }
+            return searchNormalized(query, k: k, state: state)
+        }
+    }
+
+    public func markDeleted(label: UInt64) throws {
+        try state.withLock {
+            guard var entry = $0.entries[label], !entry.deleted else {
+                throw HNSWError.deleteFailed("Failed to delete element with label \(label)")
+            }
+            entry.deleted = true
+            $0.entries[label] = entry
+        }
+    }
+
+    public func unmarkDeleted(label: UInt64) throws {
+        try state.withLock {
+            guard var entry = $0.entries[label], entry.deleted else {
+                throw HNSWError.deleteFailed("Failed to undelete element with label \(label)")
+            }
+            entry.deleted = false
+            $0.entries[label] = entry
+        }
     }
 }
+
+extension HNSWIndex {
+
+    @discardableResult
+    public func addBatch(_ vectors: [Scalar], labels: [UInt64]) throws -> Int {
+        try vectors.withUnsafeBufferPointer { vectorBuffer in
+            try labels.withUnsafeBufferPointer { labelBuffer in
+                try addBatch(vectorBuffer, labels: labelBuffer)
+            }
+        }
+    }
+
+    /// Add borrowed contiguous vectors to the index.
+    ///
+    /// `vectors` must contain `labels.count * dimensions` scalars in row-major order.
+    @discardableResult
+    public func addBatch(
+        _ vectors: UnsafeBufferPointer<Scalar>,
+        labels: UnsafeBufferPointer<UInt64>
+    ) throws -> Int {
+        let numVectors = labels.count
+        guard numVectors > 0 else { return 0 }
+        try validateDimensions(vectors.count, expectedTotal: numVectors * dimensions)
+
+        return try state.withLock { state in
+            var addedCount = 0
+            for index in 0..<numVectors {
+                let offset = index * dimensions
+                let vector = UnsafeBufferPointer(start: vectors.baseAddress! + offset, count: dimensions)
+                try upsertVector(vector, label: labels[index], state: &state)
+                addedCount += 1
+            }
+            return addedCount
+        }
+    }
+
+    @discardableResult
+    public func addBatch(_ vectors: [[Scalar]], startingLabel: UInt64? = nil) throws -> Int {
+        guard !vectors.isEmpty else { return 0 }
+        guard vectors.allSatisfy({ $0.count == dimensions }) else {
+            throw HNSWError.dimensionMismatch(expected: dimensions, got: vectors.first?.count ?? 0)
+        }
+
+        let start = startingLabel ?? UInt64(count)
+        var addedCount = 0
+        for index in vectors.indices {
+            try add(vectors[index], label: start + UInt64(index))
+            addedCount += 1
+        }
+        return addedCount
+    }
+
+    public func searchBatch(_ queries: [Scalar], numQueries: Int, k: Int) throws -> [[SearchResult]] {
+        try queries.withUnsafeBufferPointer { buffer in
+            try searchBatch(buffer, numQueries: numQueries, k: k)
+        }
+    }
+
+    /// Search borrowed contiguous query vectors.
+    public func searchBatch(
+        _ queries: UnsafeBufferPointer<Scalar>,
+        numQueries: Int,
+        k: Int
+    ) throws -> [[SearchResult]] {
+        try validateDimensions(queries.count, expectedTotal: numQueries * dimensions)
+        guard numQueries > 0 else { return [] }
+        guard k > 0 else { return Array(repeating: [], count: numQueries) }
+
+        return state.withLock { state in
+            var results: [[SearchResult]] = []
+            results.reserveCapacity(numQueries)
+            for index in 0..<numQueries {
+                let offset = index * dimensions
+                let query = UnsafeBufferPointer(start: queries.baseAddress! + offset, count: dimensions)
+                if metric.requiresNormalization {
+                    ensureCapacity(&state.queryScratch, count: dimensions)
+                    state.queryScratch.withUnsafeMutableBufferPointer { scratch in
+                        normalizeVector(query, into: scratch)
+                    }
+                    let searchResults = state.queryScratch.withUnsafeBufferPointer { normalized in
+                        searchNormalized(normalized, k: k, state: state)
+                    }
+                    results.append(searchResults)
+                } else {
+                    results.append(searchNormalized(query, k: k, state: state))
+                }
+            }
+            return results
+        }
+    }
+
+    public func searchBatch(_ queries: [[Scalar]], k: Int) throws -> [[SearchResult]] {
+        guard !queries.isEmpty else { return [] }
+        guard queries.allSatisfy({ $0.count == dimensions }) else {
+            throw HNSWError.dimensionMismatch(expected: dimensions, got: queries.first?.count ?? 0)
+        }
+        var results: [[SearchResult]] = []
+        results.reserveCapacity(queries.count)
+        for query in queries {
+            results.append(try search(query, k: k))
+        }
+        return results
+    }
+}
+
+extension HNSWIndex {
+
+    public func save(to url: URL) throws {
+        try save(to: url.path)
+    }
+
+    public func save(to path: String) throws {
+        do {
+#if os(WASI)
+            try serialize().write(to: URL(fileURLWithPath: path))
+#else
+            try serialize().write(to: URL(fileURLWithPath: path), options: .atomic)
+#endif
+        } catch {
+            throw HNSWError.saveFailed("Failed to save index to \(path)")
+        }
+    }
+
+    public static func load(
+        from url: URL,
+        dimensions: Int,
+        metric: DistanceMetric = .l2,
+        maxElements: Int = 0
+    ) throws -> HNSWIndex {
+        try load(from: url.path, dimensions: dimensions, metric: metric, maxElements: maxElements)
+    }
+
+    public static func load(
+        from path: String,
+        dimensions: Int,
+        metric: DistanceMetric = .l2,
+        maxElements: Int = 0
+    ) throws -> HNSWIndex {
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            return try load(from: data, dimensions: dimensions, metric: metric, maxElements: maxElements)
+        } catch let error as HNSWError {
+            throw error
+        } catch {
+            throw HNSWError.loadFailed("Failed to load index from \(path)")
+        }
+    }
+}
+
+extension HNSWIndex {
+
+    public func contains(label: UInt64) -> Bool {
+        state.withLock {
+            guard let entry = $0.entries[label] else {
+                return false
+            }
+            return !entry.deleted
+        }
+    }
+
+    public func getVector(label: UInt64) -> [Scalar]? {
+        state.withLock {
+            guard let entry = $0.entries[label], !entry.deleted else {
+                return nil
+            }
+            return $0.vectorStorage.withUnsafeBufferPointer { storage in
+                let vector = UnsafeBufferPointer(start: storage.baseAddress! + entry.offset, count: dimensions)
+                var output = [Scalar](repeating: .zero, count: dimensions)
+                output.withUnsafeMutableBufferPointer { destination in
+                    VectorOperations.copy(vector, into: destination)
+                }
+                return output
+            }
+        }
+    }
+
+    public var allLabels: [UInt64] {
+        state.withLock { state in
+            state.labelOrder.filter { label in
+                guard let entry = state.entries[label] else {
+                    return false
+                }
+                return !entry.deleted
+            }
+        }
+    }
+}
+
+extension HNSWIndex {
+
+    public func serialize() throws -> Data {
+        state.withLock {
+            var writer = FlatIndexWriter()
+            writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x46, 0x4C, 0x41])
+            writer.writeUInt32(1)
+            writer.writeUInt32(UInt32(dimensions))
+            writer.writeUInt32(UInt32($0.maximumElementCount))
+            writer.writeString(metric.rawValue)
+            writer.writeUInt32(UInt32($0.labelOrder.count))
+            for label in $0.labelOrder {
+                guard let entry = $0.entries[label] else {
+                    continue
+                }
+                writer.writeUInt64(label)
+                writer.writeBool(entry.deleted)
+                $0.vectorStorage.withUnsafeBufferPointer { storage in
+                    let vector = UnsafeBufferPointer(start: storage.baseAddress! + entry.offset, count: dimensions)
+                    for value in vector {
+                        writer.writeFloat(value.hnswFloatValue)
+                    }
+                }
+            }
+            return writer.data
+        }
+    }
+
+    public static func load(
+        from data: Data,
+        dimensions: Int,
+        metric: DistanceMetric = .l2,
+        maxElements: Int = 0
+    ) throws -> HNSWIndex {
+        do {
+            var reader = FlatIndexReader(data: data)
+            try reader.readMagic()
+            let version = try reader.readUInt32()
+            guard version == 1 else {
+                throw HNSWError.loadFailed("Unsupported flat index version")
+            }
+            let storedDimensions = Int(try reader.readUInt32())
+            guard storedDimensions == dimensions else {
+                throw HNSWError.dimensionMismatch(expected: dimensions, got: storedDimensions)
+            }
+            let storedCapacity = Int(try reader.readUInt32())
+            let storedMetric = try reader.readString()
+            guard storedMetric == metric.rawValue else {
+                throw HNSWError.loadFailed("Stored metric \(storedMetric) does not match \(metric.rawValue)")
+            }
+            let capacity = max(maxElements, storedCapacity)
+            let index = try HNSWIndex(
+                dimensions: dimensions,
+                maxElements: max(1, capacity),
+                metric: metric,
+                configuration: .balanced
+            )
+            let labelCount = Int(try reader.readUInt32())
+            var loadedEntries: [UInt64: Entry] = [:]
+            var loadedLabelOrder: [UInt64] = []
+            var loadedVectorStorage: [Scalar] = []
+            loadedEntries.reserveCapacity(labelCount)
+            loadedLabelOrder.reserveCapacity(labelCount)
+            loadedVectorStorage.reserveCapacity(labelCount * dimensions)
+            for _ in 0..<labelCount {
+                let label = try reader.readUInt64()
+                let deleted = try reader.readBool()
+                let offset = loadedVectorStorage.count
+                for _ in 0..<dimensions {
+                    loadedVectorStorage.append(Scalar(try reader.readFloat()))
+                }
+                loadedEntries[label] = Entry(offset: offset, deleted: deleted)
+                loadedLabelOrder.append(label)
+            }
+            try reader.ensureFullyRead()
+            index.state.withLock {
+                $0.entries = loadedEntries
+                $0.labelOrder = loadedLabelOrder
+                $0.vectorStorage = loadedVectorStorage
+                $0.queryScratch = [Scalar](repeating: .zero, count: dimensions)
+            }
+            return index
+        } catch let error as HNSWError {
+            throw error
+        } catch {
+            throw HNSWError.loadFailed("Failed to load index from data")
+        }
+    }
+}
+
+extension HNSWIndex {
+
+    @inline(__always)
+    private func validateDimensions(_ got: Int) throws {
+        guard got == dimensions else {
+            throw HNSWError.dimensionMismatch(expected: dimensions, got: got)
+        }
+    }
+
+    @inline(__always)
+    private func validateDimensions(_ got: Int, expectedTotal: Int) throws {
+        guard got == expectedTotal else {
+            throw HNSWError.dimensionMismatch(expected: expectedTotal, got: got)
+        }
+    }
+
+    @inline(__always)
+    private func ensureCapacity(_ buffer: inout [Scalar], count: Int) {
+        guard buffer.count != count else { return }
+        buffer = [Scalar](repeating: .zero, count: count)
+    }
+
+    private func normalizeVector(
+        _ input: UnsafeBufferPointer<Scalar>,
+        into output: UnsafeMutableBufferPointer<Scalar>
+    ) {
+        if Scalar.self == Float.self {
+            let inputFloats = UnsafeBufferPointer<Float>(
+                start: UnsafeRawPointer(input.baseAddress!).assumingMemoryBound(to: Float.self),
+                count: input.count
+            )
+            let outputFloats = UnsafeMutableBufferPointer<Float>(
+                start: UnsafeMutableRawPointer(output.baseAddress!).assumingMemoryBound(to: Float.self),
+                count: output.count
+            )
+            VectorOperations.normalize(inputFloats, into: outputFloats)
+        } else {
+            VectorOperations.normalize(input, into: output)
+        }
+    }
+
+    private func upsertVector(
+        _ vector: UnsafeBufferPointer<Scalar>,
+        label: UInt64,
+        state: inout State
+    ) throws {
+        let offset: Int
+        if let existing = state.entries[label] {
+            offset = existing.offset
+        } else {
+            guard state.entries.count < state.maximumElementCount else {
+                throw HNSWError.capacityExceeded(
+                    current: state.entries.count,
+                    maximum: state.maximumElementCount
+                )
+            }
+            offset = state.vectorStorage.count
+            for _ in 0..<dimensions {
+                state.vectorStorage.append(.zero)
+            }
+            state.labelOrder.append(label)
+        }
+
+        state.vectorStorage.withUnsafeMutableBufferPointer { storage in
+            let destination = UnsafeMutableBufferPointer(start: storage.baseAddress! + offset, count: dimensions)
+            if metric.requiresNormalization {
+                normalizeVector(vector, into: destination)
+            } else {
+                VectorOperations.copy(vector, into: destination)
+            }
+        }
+        state.entries[label] = Entry(offset: offset, deleted: false)
+    }
+
+    private func searchNormalized(
+        _ query: UnsafeBufferPointer<Scalar>,
+        k: Int,
+        state: State
+    ) -> [SearchResult] {
+        var results: [SearchResult] = []
+        results.reserveCapacity(min(k, state.entries.count))
+
+        state.vectorStorage.withUnsafeBufferPointer { storage in
+            for label in state.labelOrder {
+                guard let entry = state.entries[label], !entry.deleted else {
+                    continue
+                }
+                let vector = UnsafeBufferPointer(start: storage.baseAddress! + entry.offset, count: dimensions)
+                insertTopKSearchResult(
+                    SearchResult(
+                        label: label,
+                        distance: VectorOperations.distance(from: query, to: vector, metric: metric)
+                    ),
+                    into: &results,
+                    limit: k
+                )
+            }
+        }
+        return results
+    }
+}
+
+private struct FlatIndexWriter {
+    var data = Data()
+
+    mutating func writeBytes(_ bytes: [UInt8]) {
+        data.append(contentsOf: bytes)
+    }
+
+    mutating func writeBool(_ value: Bool) {
+        writeBytes([value ? 1 : 0])
+    }
+
+    mutating func writeUInt32(_ value: UInt32) {
+        writeBytes([
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24),
+        ])
+    }
+
+    mutating func writeUInt64(_ value: UInt64) {
+        writeBytes([
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24),
+            UInt8(truncatingIfNeeded: value >> 32),
+            UInt8(truncatingIfNeeded: value >> 40),
+            UInt8(truncatingIfNeeded: value >> 48),
+            UInt8(truncatingIfNeeded: value >> 56),
+        ])
+    }
+
+    mutating func writeFloat(_ value: Float) {
+        writeUInt32(value.bitPattern)
+    }
+
+    mutating func writeString(_ value: String) {
+        writeUInt32(UInt32(value.utf8.count))
+        data.append(contentsOf: value.utf8)
+    }
+}
+
+private struct FlatIndexReader {
+    let data: Data
+    var offset = 0
+
+    mutating func readMagic() throws {
+        let magic = try readUInt64()
+        guard magic == 0x414C_4657_534E_4853 else {
+            throw HNSWError.loadFailed("Invalid flat index magic")
+        }
+    }
+
+    mutating func readByte() throws -> UInt8 {
+        guard offset < data.count else {
+            throw HNSWError.loadFailed("Flat index data is truncated")
+        }
+        defer { offset += 1 }
+        return data.withUnsafeBytes { buffer in
+            buffer.loadUnaligned(fromByteOffset: offset, as: UInt8.self)
+        }
+    }
+
+    mutating func skipBytes(count: Int) throws {
+        guard count >= 0, offset + count <= data.count else {
+            throw HNSWError.loadFailed("Flat index data is truncated")
+        }
+        offset += count
+    }
+
+    mutating func readBool() throws -> Bool {
+        let value = try readByte()
+        guard value == 0 || value == 1 else {
+            throw HNSWError.loadFailed("Invalid boolean in flat index data")
+        }
+        return value == 1
+    }
+
+    mutating func readUInt32() throws -> UInt32 {
+        guard offset + 4 <= data.count else {
+            throw HNSWError.loadFailed("Flat index data is truncated")
+        }
+        defer { offset += 4 }
+        return data.withUnsafeBytes { buffer in
+            UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
+        }
+    }
+
+    mutating func readUInt64() throws -> UInt64 {
+        guard offset + 8 <= data.count else {
+            throw HNSWError.loadFailed("Flat index data is truncated")
+        }
+        defer { offset += 8 }
+        return data.withUnsafeBytes { buffer in
+            UInt64(littleEndian: buffer.loadUnaligned(fromByteOffset: offset, as: UInt64.self))
+        }
+    }
+
+    mutating func readFloat() throws -> Float {
+        Float(bitPattern: try readUInt32())
+    }
+
+    mutating func readString() throws -> String {
+        let count = Int(try readUInt32())
+        guard count >= 0, offset + count <= data.count else {
+            throw HNSWError.loadFailed("Flat index data is truncated")
+        }
+        defer { offset += count }
+        return data.withUnsafeBytes { buffer in
+            let start = buffer.baseAddress!.advanced(by: offset).assumingMemoryBound(to: UInt8.self)
+            let bytes = UnsafeBufferPointer(start: start, count: count)
+            return String(decoding: bytes, as: UTF8.self)
+        }
+    }
+
+    func ensureFullyRead() throws {
+        guard offset == data.count else {
+            throw HNSWError.loadFailed("Flat index data has trailing bytes")
+        }
+    }
+}
+
+#endif
 
 // MARK: - Type Aliases for Convenience
 

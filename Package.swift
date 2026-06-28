@@ -3,6 +3,12 @@
 
 import PackageDescription
 
+let nativePlatforms: [Platform] = [
+    .macOS,
+    .iOS,
+    .linux,
+]
+
 let package = Package(
     name: "swift-hnsw",
     platforms: [
@@ -14,6 +20,9 @@ let package = Package(
             name: "SwiftHNSW",
             targets: ["SwiftHNSW"]
         ),
+    ],
+    traits: [
+        .trait(name: "CxxBackend"),
     ],
     targets: [
         // C++ hnswlib target with C bridge
@@ -31,15 +40,26 @@ let package = Package(
                 .headerSearchPath("include")
             ]
         ),
-        // Swift wrapper target
+        // Public Swift target
         .target(
             name: "SwiftHNSW",
-            dependencies: ["hnswlib"],
-            path: "Sources/SwiftHNSW"
+            dependencies: [
+                .target(
+                    name: "hnswlib",
+                    condition: .when(platforms: nativePlatforms, traits: ["CxxBackend"])
+                ),
+            ],
+            path: "Sources/SwiftHNSW",
+            swiftSettings: [
+                .define("HNSWLIB_BACKEND", .when(platforms: nativePlatforms, traits: ["CxxBackend"])),
+            ]
         ),
         .testTarget(
             name: "SwiftHNSWTests",
-            dependencies: ["SwiftHNSW"]
+            dependencies: ["SwiftHNSW"],
+            swiftSettings: [
+                .define("HNSWLIB_BACKEND", .when(platforms: nativePlatforms, traits: ["CxxBackend"])),
+            ]
         ),
     ],
     cxxLanguageStandard: .cxx17

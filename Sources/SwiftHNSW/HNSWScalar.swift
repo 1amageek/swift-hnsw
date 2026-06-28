@@ -1,8 +1,24 @@
 import Foundation
+#if HNSWLIB_BACKEND && canImport(hnswlib)
 import hnswlib
+#endif
 
 /// Protocol for scalar types supported by HNSW index
 public protocol HNSWScalar: BinaryFloatingPoint, Sendable {
+    var hnswFloatValue: Float { get }
+}
+
+extension Float: HNSWScalar {
+    public var hnswFloatValue: Float { self }
+}
+
+extension Float16: HNSWScalar {
+    public var hnswFloatValue: Float { Float(self) }
+}
+
+#if HNSWLIB_BACKEND && canImport(hnswlib)
+/// C++ hnswlib scalar bridge.
+public protocol HNSWNativeScalar: HNSWScalar {
     /// Create L2 space handle for this scalar type
     static func createL2Space(dimensions: Int) -> HNSWSpaceHandle?
 
@@ -56,7 +72,7 @@ public protocol HNSWScalar: BinaryFloatingPoint, Sendable {
 
 // MARK: - Float Conformance
 
-extension Float: HNSWScalar {
+extension Float: HNSWNativeScalar {
     public static func createL2Space(dimensions: Int) -> HNSWSpaceHandle? {
         hnsw_create_l2_space(dimensions)
     }
@@ -117,7 +133,7 @@ extension Float: HNSWScalar {
 
 // MARK: - Float16 Conformance
 
-extension Float16: HNSWScalar {
+extension Float16: HNSWNativeScalar {
     public static func createL2Space(dimensions: Int) -> HNSWSpaceHandle? {
         hnsw_create_l2_space_f16(dimensions)
     }
@@ -185,3 +201,4 @@ extension Float16: HNSWScalar {
         }
     }
 }
+#endif

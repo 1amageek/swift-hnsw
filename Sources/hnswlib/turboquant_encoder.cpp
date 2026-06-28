@@ -1,3 +1,7 @@
+#if defined(__wasi__) || defined(__wasm__)
+extern "C" void hnswlib_wasm_unavailable_turboquant_encoder(void) {}
+#else
+
 #include "include/turboquant_encoder.h"
 #include <cstring>
 #include <cstdlib>
@@ -462,3 +466,5 @@ void hnsw_tq_encoder_quantize_rotated(TurboQuantEncoderHandle encoder,
 }
 
 } // extern "C"
+
+#endif

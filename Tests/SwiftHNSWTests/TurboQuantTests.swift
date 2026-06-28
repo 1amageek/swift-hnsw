@@ -3,8 +3,21 @@
 
 import Testing
 import Foundation
+#if HNSWLIB_BACKEND && canImport(hnswlib)
 import hnswlib
+#endif
 @testable import SwiftHNSW
+
+private func removeTemporaryFile(atPath path: String) {
+    guard FileManager.default.fileExists(atPath: path) else {
+        return
+    }
+    do {
+        try FileManager.default.removeItem(atPath: path)
+    } catch {
+        #expect(Bool(false), "Failed to remove temporary file: \(error)")
+    }
+}
 
 // MARK: - BitPacking Tests
 
@@ -81,6 +94,7 @@ struct ScalarQuantizerTests {
 
 // MARK: - HD³ Rotation Tests
 
+#if HNSWLIB_BACKEND && canImport(hnswlib)
 @Suite("HD3 Rotation Tests")
 struct HD3RotationTests {
 
@@ -187,6 +201,7 @@ struct HD3RotationTests {
                 "d=\(d): cosine vs rotL2 recall should be >= \(expectedRecall), got \(recall)")
     }
 }
+#endif
 
 // MARK: - TurboQuantIndex Tests
 
@@ -342,7 +357,7 @@ struct TurboQuantIndexTests {
         // Save
         let tmpPath = NSTemporaryDirectory() + "tq_test_\(UUID().uuidString).bin"
         try index.save(to: tmpPath)
-        defer { try? FileManager.default.removeItem(atPath: tmpPath) }
+        defer { removeTemporaryFile(atPath: tmpPath) }
 
         let fileSize = try FileManager.default.attributesOfItem(atPath: tmpPath)[.size] as! Int
         #expect(fileSize > 0)
@@ -380,7 +395,7 @@ struct TurboQuantIndexTests {
 
         let tmpPath = NSTemporaryDirectory() + "tq_test768_\(UUID().uuidString).bin"
         try index.save(to: tmpPath)
-        defer { try? FileManager.default.removeItem(atPath: tmpPath) }
+        defer { removeTemporaryFile(atPath: tmpPath) }
 
         let loaded = try TurboQuantIndex.load(from: tmpPath)
         #expect(loaded.dimensions == 768)
@@ -413,7 +428,7 @@ struct TurboQuantIndexTests {
 
         let tmpPath = NSTemporaryDirectory() + "tq_ef_\(UUID().uuidString).bin"
         try index.save(to: tmpPath)
-        defer { try? FileManager.default.removeItem(atPath: tmpPath) }
+        defer { removeTemporaryFile(atPath: tmpPath) }
 
         let loaded = try TurboQuantIndex.load(from: tmpPath)
         // Explicitly set the same efSearch on loaded index
@@ -440,7 +455,7 @@ struct TurboQuantIndexTests {
 
         let tmpPath = NSTemporaryDirectory() + "tq_header_\(UUID().uuidString).bin"
         try index.save(to: tmpPath)
-        defer { try? FileManager.default.removeItem(atPath: tmpPath) }
+        defer { removeTemporaryFile(atPath: tmpPath) }
 
         let loaded = try TurboQuantIndex.load(from: tmpPath)
         #expect(loaded.dimensions == 768)
@@ -479,7 +494,7 @@ struct TurboQuantIndexTests {
 
         let tmpPath = NSTemporaryDirectory() + "tq_addsave_\(UUID().uuidString).bin"
         try index.save(to: tmpPath) // triggers finalize
-        defer { try? FileManager.default.removeItem(atPath: tmpPath) }
+        defer { removeTemporaryFile(atPath: tmpPath) }
 
         #expect(index.isFinalized)
         #expect(throws: HNSWError.self) {

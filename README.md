@@ -1,15 +1,18 @@
 # SwiftHNSW
 
-A high-performance Swift wrapper for [hnswlib](https://github.com/nmslib/hnswlib) - Hierarchical Navigable Small World graphs for approximate nearest neighbor search.
+A Swift vector search library for Hierarchical Navigable Small World style nearest-neighbor APIs.
+The default backend is implemented in Swift and supports WebAssembly builds. An optional C++ backend uses [hnswlib](https://github.com/nmslib/hnswlib) for native high-performance deployments.
 
 ## Features
 
-- **Fast ANN Search**: Sub-millisecond approximate nearest neighbor queries
+- **Swift Backend by Default**: Builds without a C++ toolchain and works with Swift WebAssembly SDKs
+- **Optional C++ Backend**: Enable `CxxBackend` to use hnswlib on supported native platforms
+- **Fast Vector Search**: Nearest-neighbor queries through a stable Swift API
 - **Float16 Support**: Native half-precision for 50% memory reduction
 - **TurboQuant**: 4-bit vector quantization with HD³ rotation for 6-8x memory compression
 - **Multiple Distance Metrics**: L2 (Euclidean), Inner Product, and Cosine similarity
-- **Thread-Safe**: Concurrent read access with RWLock synchronization
-- **SIMD Optimized**: ARM NEON / x86 AVX acceleration for Float32, Float16, and TurboQuant
+- **Thread-Safe**: Sendable API with backend-specific synchronization
+- **SIMD Optimized C++ Path**: ARM NEON / x86 AVX acceleration for Float32, Float16, and TurboQuant when `CxxBackend` is enabled
 - **Batch Operations**: Efficient bulk add and search operations
 - **Persistence**: Save and load indexes to/from disk
 - **Swift 6 Ready**: Full Sendable conformance for modern concurrency
@@ -18,6 +21,8 @@ A high-performance Swift wrapper for [hnswlib](https://github.com/nmslib/hnswlib
 
 - Swift 6.2+
 - macOS 13+ / iOS 16+
+- Swift WebAssembly SDK for WASM builds
+- C++17 toolchain only when enabling `CxxBackend`
 
 ## Installation
 
@@ -38,6 +43,22 @@ Then add `SwiftHNSW` to your target dependencies:
     name: "YourTarget",
     dependencies: ["SwiftHNSW"]
 )
+```
+
+### Backend Selection
+
+SwiftHNSW builds the Swift backend by default:
+
+```bash
+swift build
+swift build --swift-sdk swift-6.3.1-RELEASE_wasm
+```
+
+Enable the hnswlib-backed C++ implementation explicitly on supported native platforms:
+
+```bash
+swift build --traits CxxBackend
+swift test --traits CxxBackend
 ```
 
 ## Quick Start
@@ -262,7 +283,16 @@ index.capacity   // Maximum capacity
 index.isEmpty    // Boolean check
 ```
 
-## HNSW Algorithm
+## Backend Semantics
+
+| Backend | Selection | Search behavior | Synchronization |
+|---------|-----------|-----------------|-----------------|
+| Swift backend | Default | Exact nearest-neighbor search, O(n × d) | Serialized state access with `Mutex` |
+| C++ backend | `CxxBackend` trait | Approximate HNSW search, O(log n) average | Serialized access through the bridge lock |
+
+The two backends expose the same Swift API and typed errors. The Swift backend is the portable correctness baseline for WebAssembly and environments without a C++ toolchain. The C++ backend is the native high-performance path.
+
+## C++ HNSW Algorithm
 
 HNSW (Hierarchical Navigable Small World) is a graph-based approximate nearest neighbor search algorithm. It builds a multi-layer graph structure where:
 
@@ -284,9 +314,11 @@ HNSW (Hierarchical Navigable Small World) is a graph-based approximate nearest n
 - **Search time**: O(log(n)) average
 - **Memory**: O(n * M) for connections + O(n * d * sizeof(Scalar)) for vectors
 
-## SIMD Optimization
+These characteristics apply to the optional C++ backend. The default Swift backend performs exact search with O(n × d) query cost.
 
-SwiftHNSW includes hand-optimized SIMD implementations:
+## C++ SIMD Optimization
+
+The optional C++ backend includes hand-optimized SIMD implementations:
 
 ### ARM (Apple Silicon, iOS)
 - **Float32**: NEON intrinsics with 4x loop unrolling
@@ -305,8 +337,8 @@ Both implementations use:
 
 `HNSWIndex` is thread-safe with the following guarantees:
 
-- **Multiple concurrent reads**: Search operations can run in parallel
-- **Exclusive writes**: Add/delete operations have exclusive access
+- **Swift backend**: State access is serialized with `Mutex`
+- **C++ backend**: C bridge access is serialized through the backend lock
 - **Sendable**: Safe to use across actor boundaries
 
 ```swift
@@ -320,12 +352,13 @@ await withTaskGroup(of: [SearchResult].self) { group in
 }
 ```
 
-## Benchmarks
+## C++ Backend Benchmarks
 
 **Measurement methodology:**
 
 - **Platform**: Apple Silicon (arm64), macOS 15
 - **Build**: Release (`-Os`) via `xcodebuild -configuration Release ENABLE_TESTABILITY=YES`
+- **Backend**: C++ backend enabled with `CxxBackend`
 - **SIMD**: ARM NEON with FMA (`vfmaq_f32`) for L2 and Inner Product distance
 - **Data**: Random vectors sampled uniformly from [-1, 1]
 - **Ground truth**: Brute-force exact search (L2 for Float32/Float16, cosine for TurboQuant)
@@ -334,8 +367,16 @@ await withTaskGroup(of: [SearchResult].self) { group in
 - **Warmup**: 1 query discarded before timing
 - **Timing**: `CFAbsoluteTimeGetCurrent()` wall-clock, averaged over all queries
 
+Run the C++ backend benchmarks with:
+
 ```bash
-xcodebuild test -scheme swift-hnsw -configuration Release ENABLE_TESTABILITY=YES -only-testing SwiftHNSWTests/ANNBenchmarks
+swift test --traits CxxBackend --filter ANNBenchmarks
+```
+
+Run the Swift backend performance smoke tests with:
+
+```bash
+SWIFT_BACKEND_PERF=1 swift test
 ```
 
 ### Recall vs QPS Trade-off (128-dim, 10K vectors)
@@ -411,9 +452,9 @@ do {
 
 ## License
 
-This project wraps [hnswlib](https://github.com/nmslib/hnswlib) which is licensed under Apache 2.0.
+The optional C++ backend wraps [hnswlib](https://github.com/nmslib/hnswlib), which is licensed under Apache 2.0.
 
 ## Acknowledgments
 
-- [hnswlib](https://github.com/nmslib/hnswlib) - The underlying C++ library
+- [hnswlib](https://github.com/nmslib/hnswlib) - Optional C++ backend
 - [Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs](https://arxiv.org/abs/1603.09320) - Original HNSW paper
