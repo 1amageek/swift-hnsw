@@ -43,6 +43,54 @@ struct SwiftBackendHNSWTests {
         #expect(try index.search([0, 10], k: 1).first?.label == 2)
     }
 
+    @Test("Deleted entry point remains navigable for later inserts")
+    func deletedEntryPointRemainsNavigableForLaterInserts() throws {
+        let index = try HNSWIndex<Float>(
+            dimensions: 2,
+            maxElements: 2,
+            metric: .l2,
+            configuration: HNSWConfiguration(m: 2, efConstruction: 8, efSearch: 8)
+        )
+        try index.add([0, 0], label: 1)
+        try index.markDeleted(label: 1)
+        try index.add([1, 0], label: 2)
+
+        let results = try index.search([1, 0], k: 2)
+
+        #expect(results.map(\.label) == [2])
+        #expect(!index.contains(label: 1))
+    }
+
+    @Test("Deleted capacity is reusable only when enabled")
+    func deletedCapacityReuseRequiresConfiguration() throws {
+        let disabled = try HNSWIndex<Float>(
+            dimensions: 2,
+            maxElements: 1,
+            metric: .l2,
+            configuration: HNSWConfiguration(allowReplaceDeleted: false)
+        )
+        try disabled.add([0, 0], label: 1)
+        try disabled.markDeleted(label: 1)
+        #expect(throws: HNSWError.self) {
+            try disabled.add([1, 0], label: 2)
+        }
+
+        let enabled = try HNSWIndex<Float>(
+            dimensions: 2,
+            maxElements: 1,
+            metric: .l2,
+            configuration: HNSWConfiguration(allowReplaceDeleted: true)
+        )
+        try enabled.add([0, 0], label: 1)
+        try enabled.markDeleted(label: 1)
+        try enabled.add([1, 0], label: 2)
+
+        #expect(enabled.count == 1)
+        #expect(enabled.allLabels == [2])
+        #expect(!enabled.contains(label: 1))
+        #expect(try enabled.search([1, 0], k: 1).map(\.label) == [2])
+    }
+
     @Test("Batch search and serialization roundtrip preserve labels and distances")
     func batchAndSerializationRoundtrip() throws {
         let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 8, metric: .l2)
@@ -109,6 +157,15 @@ struct SwiftBackendHNSWTests {
         let loaded = try HNSWIndex<Float16>.load(from: data, dimensions: 2, metric: .cosine)
 
         #expect(try loaded.search([2, 0], k: 2).map(\.label) == [1, 2])
+    }
+
+    @Test("Graph loader rejects invalid self edge")
+    func graphLoaderRejectsInvalidSelfEdge() throws {
+        let payload = invalidGraphPayloadWithSelfEdge()
+
+        #expect(throws: HNSWError.self) {
+            _ = try HNSWIndex<Float>.load(from: payload, dimensions: 1, metric: .l2)
+        }
     }
 }
 
@@ -291,6 +348,75 @@ private func removeFileIfPresent(_ path: String) {
         return
     } catch {
         return
+    }
+}
+
+private func invalidGraphPayloadWithSelfEdge() -> Data {
+    var writer = TestGraphPayloadWriter()
+    writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
+    writer.writeUInt32(2)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeString("l2")
+    writer.writeUInt32(16)
+    writer.writeUInt32(200)
+    writer.writeUInt32(50)
+    writer.writeUInt32(100)
+    writer.writeBool(false)
+    writer.writeUInt32(0)
+    writer.writeUInt32(0)
+    writer.writeUInt64(1)
+    writer.writeUInt32(1)
+    writer.writeUInt64(1)
+    writer.writeBool(false)
+    writer.writeUInt32(0)
+    writer.writeFloat(0)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeUInt32(0)
+    return writer.data
+}
+
+private struct TestGraphPayloadWriter {
+    var data = Data()
+
+    mutating func writeBytes(_ bytes: [UInt8]) {
+        data.append(contentsOf: bytes)
+    }
+
+    mutating func writeBool(_ value: Bool) {
+        writeBytes([value ? 1 : 0])
+    }
+
+    mutating func writeUInt32(_ value: UInt32) {
+        writeBytes([
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24),
+        ])
+    }
+
+    mutating func writeUInt64(_ value: UInt64) {
+        writeBytes([
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24),
+            UInt8(truncatingIfNeeded: value >> 32),
+            UInt8(truncatingIfNeeded: value >> 40),
+            UInt8(truncatingIfNeeded: value >> 48),
+            UInt8(truncatingIfNeeded: value >> 56),
+        ])
+    }
+
+    mutating func writeFloat(_ value: Float) {
+        writeUInt32(value.bitPattern)
+    }
+
+    mutating func writeString(_ value: String) {
+        writeUInt32(UInt32(value.utf8.count))
+        data.append(contentsOf: value.utf8)
     }
 }
 #endif

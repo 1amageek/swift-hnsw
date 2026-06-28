@@ -711,12 +711,14 @@ extension HNSWIndex {
 
 #else
 
-/// Swift backend exact vector index with the same public API as the optional hnswlib-backed index.
+/// Swift backend HNSW graph index with the same public API as the optional hnswlib-backed index.
 public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
 
     private struct Entry: Sendable {
+        var internalID: Int
         var offset: Int
         var deleted: Bool
+        var level: Int
     }
 
     private struct State: Sendable {
@@ -724,7 +726,14 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
         var efSearch: Int
         var entries: [UInt64: Entry]
         var labelOrder: [UInt64]
+        var liveCount: Int
         var vectorStorage: [Scalar]
+        var connections: [[[Int]]]
+        var entryPoint: Int?
+        var maxLevel: Int
+        var levelGenerator: HNSWLevelGenerator
+        var visited: [UInt32]
+        var visitedTag: UInt32
         var queryScratch: [Scalar]
     }
 
@@ -758,7 +767,14 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
             efSearch: configuration.efSearch,
             entries: [:],
             labelOrder: [],
+            liveCount: 0,
             vectorStorage: vectorStorage,
+            connections: [],
+            entryPoint: nil,
+            maxLevel: -1,
+            levelGenerator: HNSWLevelGenerator(seed: configuration.randomSeed),
+            visited: [],
+            visitedTag: 0,
             queryScratch: [Scalar](repeating: .zero, count: dimensions)
         ))
     }
@@ -826,15 +842,15 @@ extension HNSWIndex {
 
         return state.withLock { state in
             if metric.requiresNormalization {
-                ensureCapacity(&state.queryScratch, count: dimensions)
-                state.queryScratch.withUnsafeMutableBufferPointer { scratch in
+                var normalizedQuery = [Scalar](repeating: .zero, count: dimensions)
+                normalizedQuery.withUnsafeMutableBufferPointer { scratch in
                     normalizeVector(query, into: scratch)
                 }
-                return state.queryScratch.withUnsafeBufferPointer { normalized in
-                    searchNormalized(normalized, k: k, state: state)
+                return normalizedQuery.withUnsafeBufferPointer { normalized in
+                    searchNormalized(normalized, k: k, state: &state)
                 }
             }
-            return searchNormalized(query, k: k, state: state)
+            return searchNormalized(query, k: k, state: &state)
         }
     }
 
@@ -845,6 +861,7 @@ extension HNSWIndex {
             }
             entry.deleted = true
             $0.entries[label] = entry
+            $0.liveCount -= 1
         }
     }
 
@@ -855,6 +872,7 @@ extension HNSWIndex {
             }
             entry.deleted = false
             $0.entries[label] = entry
+            $0.liveCount += 1
         }
     }
 }
@@ -933,16 +951,16 @@ extension HNSWIndex {
                 let offset = index * dimensions
                 let query = UnsafeBufferPointer(start: queries.baseAddress! + offset, count: dimensions)
                 if metric.requiresNormalization {
-                    ensureCapacity(&state.queryScratch, count: dimensions)
-                    state.queryScratch.withUnsafeMutableBufferPointer { scratch in
+                    var normalizedQuery = [Scalar](repeating: .zero, count: dimensions)
+                    normalizedQuery.withUnsafeMutableBufferPointer { scratch in
                         normalizeVector(query, into: scratch)
                     }
-                    let searchResults = state.queryScratch.withUnsafeBufferPointer { normalized in
-                        searchNormalized(normalized, k: k, state: state)
+                    let searchResults = normalizedQuery.withUnsafeBufferPointer { normalized in
+                        searchNormalized(normalized, k: k, state: &state)
                     }
                     results.append(searchResults)
                 } else {
-                    results.append(searchNormalized(query, k: k, state: state))
+                    results.append(searchNormalized(query, k: k, state: &state))
                 }
             }
             return results
@@ -1051,22 +1069,40 @@ extension HNSWIndex {
     public func serialize() throws -> Data {
         state.withLock {
             var writer = FlatIndexWriter()
-            writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x46, 0x4C, 0x41])
-            writer.writeUInt32(1)
+            writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
+            writer.writeUInt32(2)
             writer.writeUInt32(UInt32(dimensions))
             writer.writeUInt32(UInt32($0.maximumElementCount))
             writer.writeString(metric.rawValue)
+            writer.writeUInt32(UInt32(configuration.m))
+            writer.writeUInt32(UInt32(configuration.efConstruction))
+            writer.writeUInt32(UInt32($0.efSearch))
+            writer.writeUInt32(UInt32(bitPattern: Int32(configuration.randomSeed)))
+            writer.writeBool(configuration.allowReplaceDeleted)
+            writer.writeUInt32(UInt32(bitPattern: Int32($0.maxLevel)))
+            writer.writeUInt32($0.entryPoint.map(UInt32.init) ?? UInt32.max)
+            writer.writeUInt64($0.levelGenerator.currentState)
             writer.writeUInt32(UInt32($0.labelOrder.count))
-            for label in $0.labelOrder {
+            for internalID in $0.labelOrder.indices {
+                let label = $0.labelOrder[internalID]
                 guard let entry = $0.entries[label] else {
                     continue
                 }
                 writer.writeUInt64(label)
                 writer.writeBool(entry.deleted)
+                writer.writeUInt32(UInt32(entry.level))
                 $0.vectorStorage.withUnsafeBufferPointer { storage in
                     let vector = UnsafeBufferPointer(start: storage.baseAddress! + entry.offset, count: dimensions)
                     for value in vector {
                         writer.writeFloat(value.hnswFloatValue)
+                    }
+                }
+                let levels = internalID < $0.connections.count ? $0.connections[internalID] : []
+                writer.writeUInt32(UInt32(levels.count))
+                for neighbors in levels {
+                    writer.writeUInt32(UInt32(neighbors.count))
+                    for neighbor in neighbors {
+                        writer.writeUInt32(UInt32(neighbor))
                     }
                 }
             }
@@ -1082,57 +1118,337 @@ extension HNSWIndex {
     ) throws -> HNSWIndex {
         do {
             var reader = FlatIndexReader(data: data)
-            try reader.readMagic()
+            let magic = try reader.readMagic()
             let version = try reader.readUInt32()
-            guard version == 1 else {
-                throw HNSWError.loadFailed("Unsupported flat index version")
+            switch magic {
+            case FlatIndexReader.graphMagic:
+                return try loadGraph(
+                    reader: &reader,
+                    version: version,
+                    dimensions: dimensions,
+                    metric: metric,
+                    maxElements: maxElements
+                )
+            case FlatIndexReader.flatMagic:
+                return try loadFlat(
+                    reader: &reader,
+                    version: version,
+                    dimensions: dimensions,
+                    metric: metric,
+                    maxElements: maxElements
+                )
+            default:
+                throw HNSWError.loadFailed("Invalid Swift HNSW index magic")
             }
-            let storedDimensions = Int(try reader.readUInt32())
-            guard storedDimensions == dimensions else {
-                throw HNSWError.dimensionMismatch(expected: dimensions, got: storedDimensions)
-            }
-            let storedCapacity = Int(try reader.readUInt32())
-            let storedMetric = try reader.readString()
-            guard storedMetric == metric.rawValue else {
-                throw HNSWError.loadFailed("Stored metric \(storedMetric) does not match \(metric.rawValue)")
-            }
-            let capacity = max(maxElements, storedCapacity)
-            let index = try HNSWIndex(
-                dimensions: dimensions,
-                maxElements: max(1, capacity),
-                metric: metric,
-                configuration: .balanced
-            )
-            let labelCount = Int(try reader.readUInt32())
-            var loadedEntries: [UInt64: Entry] = [:]
-            var loadedLabelOrder: [UInt64] = []
-            var loadedVectorStorage: [Scalar] = []
-            loadedEntries.reserveCapacity(labelCount)
-            loadedLabelOrder.reserveCapacity(labelCount)
-            loadedVectorStorage.reserveCapacity(labelCount * dimensions)
-            for _ in 0..<labelCount {
-                let label = try reader.readUInt64()
-                let deleted = try reader.readBool()
-                let offset = loadedVectorStorage.count
-                for _ in 0..<dimensions {
-                    loadedVectorStorage.append(Scalar(try reader.readFloat()))
-                }
-                loadedEntries[label] = Entry(offset: offset, deleted: deleted)
-                loadedLabelOrder.append(label)
-            }
-            try reader.ensureFullyRead()
-            index.state.withLock {
-                $0.entries = loadedEntries
-                $0.labelOrder = loadedLabelOrder
-                $0.vectorStorage = loadedVectorStorage
-                $0.queryScratch = [Scalar](repeating: .zero, count: dimensions)
-            }
-            return index
         } catch let error as HNSWError {
             throw error
         } catch {
             throw HNSWError.loadFailed("Failed to load index from data")
         }
+    }
+
+    private static func loadGraph(
+        reader: inout FlatIndexReader,
+        version: UInt32,
+        dimensions: Int,
+        metric: DistanceMetric,
+        maxElements: Int
+    ) throws -> HNSWIndex {
+        guard version == 2 else {
+            throw HNSWError.loadFailed("Unsupported graph index version")
+        }
+        let storedDimensions = Int(try reader.readUInt32())
+        guard storedDimensions == dimensions else {
+            throw HNSWError.dimensionMismatch(expected: dimensions, got: storedDimensions)
+        }
+        let storedCapacity = Int(try reader.readUInt32())
+        let storedMetric = try reader.readString()
+        guard storedMetric == metric.rawValue else {
+            throw HNSWError.loadFailed("Stored metric \(storedMetric) does not match \(metric.rawValue)")
+        }
+
+        let storedM = Int(try reader.readUInt32())
+        let storedEfConstruction = Int(try reader.readUInt32())
+        let storedEfSearch = Int(try reader.readUInt32())
+        guard storedM > 0 else {
+            throw HNSWError.loadFailed("Graph index contains invalid M")
+        }
+        guard storedEfConstruction > 0, storedEfSearch > 0 else {
+            throw HNSWError.loadFailed("Graph index contains invalid ef value")
+        }
+        let storedSeed = Int(Int32(bitPattern: try reader.readUInt32()))
+        let storedAllowReplaceDeleted = try reader.readBool()
+        let storedMaxLevel = Int(Int32(bitPattern: try reader.readUInt32()))
+        let storedEntryPoint = try reader.readUInt32()
+        let generatorState = try reader.readUInt64()
+        let labelCount = Int(try reader.readUInt32())
+
+        let capacity = max(maxElements, storedCapacity, labelCount)
+        let index = try HNSWIndex(
+            dimensions: dimensions,
+            maxElements: max(1, capacity),
+            metric: metric,
+            configuration: HNSWConfiguration(
+                m: storedM,
+                efConstruction: storedEfConstruction,
+                efSearch: storedEfSearch,
+                randomSeed: storedSeed,
+                allowReplaceDeleted: storedAllowReplaceDeleted
+            )
+        )
+
+        var loadedEntries: [UInt64: Entry] = [:]
+        var loadedLabelOrder: [UInt64] = []
+        var loadedVectorStorage: [Scalar] = []
+        var loadedConnections: [[[Int]]] = []
+        loadedEntries.reserveCapacity(labelCount)
+        loadedLabelOrder.reserveCapacity(labelCount)
+        loadedVectorStorage.reserveCapacity(labelCount * dimensions)
+        loadedConnections.reserveCapacity(labelCount)
+
+        for internalID in 0..<labelCount {
+            let label = try reader.readUInt64()
+            guard loadedEntries[label] == nil else {
+                throw HNSWError.loadFailed("Graph index contains duplicate labels")
+            }
+            let deleted = try reader.readBool()
+            let level = Int(try reader.readUInt32())
+            guard level >= 0, level < Self.maximumSerializedLevelCount else {
+                throw HNSWError.loadFailed("Graph index contains invalid level")
+            }
+            let offset = loadedVectorStorage.count
+            for _ in 0..<dimensions {
+                loadedVectorStorage.append(Scalar(try reader.readFloat()))
+            }
+
+            let levelCount = Int(try reader.readUInt32())
+            guard levelCount == level + 1 else {
+                throw HNSWError.loadFailed("Graph index level count does not match node level")
+            }
+            var nodeConnections: [[Int]] = []
+            nodeConnections.reserveCapacity(levelCount)
+            for levelIndex in 0..<levelCount {
+                let neighborCount = Int(try reader.readUInt32())
+                guard neighborCount <= max(0, labelCount - 1) else {
+                    throw HNSWError.loadFailed("Graph index contains too many neighbors")
+                }
+                guard neighborCount <= Self.maximumConnections(at: levelIndex, m: storedM) else {
+                    throw HNSWError.loadFailed("Graph index exceeds configured connection limit")
+                }
+                var neighbors: [Int] = []
+                neighbors.reserveCapacity(neighborCount)
+                for _ in 0..<neighborCount {
+                    let neighbor = Int(try reader.readUInt32())
+                    guard neighbor >= 0, neighbor < labelCount else {
+                        throw HNSWError.loadFailed("Graph index contains invalid neighbor id")
+                    }
+                    neighbors.append(neighbor)
+                }
+                nodeConnections.append(neighbors)
+            }
+
+            loadedEntries[label] = Entry(
+                internalID: internalID,
+                offset: offset,
+                deleted: deleted,
+                level: level
+            )
+            loadedLabelOrder.append(label)
+            loadedConnections.append(nodeConnections)
+        }
+        try reader.ensureFullyRead()
+
+        let entryPoint: Int?
+        if storedEntryPoint == UInt32.max {
+            entryPoint = nil
+        } else {
+            let value = Int(storedEntryPoint)
+            guard value >= 0, value < labelCount else {
+                throw HNSWError.loadFailed("Graph index contains invalid entry point")
+            }
+            entryPoint = value
+        }
+        try validateLoadedGraph(
+            entries: loadedEntries,
+            labelOrder: loadedLabelOrder,
+            connections: loadedConnections,
+            entryPoint: entryPoint,
+            maxLevel: storedMaxLevel,
+            m: storedM
+        )
+
+        index.state.withLock {
+            $0.maximumElementCount = max(1, capacity)
+            $0.efSearch = storedEfSearch
+            $0.entries = loadedEntries
+            $0.labelOrder = loadedLabelOrder
+            $0.liveCount = loadedEntries.values.reduce(0) { count, entry in
+                entry.deleted ? count : count + 1
+            }
+            $0.vectorStorage = loadedVectorStorage
+            $0.connections = loadedConnections
+            $0.entryPoint = entryPoint
+            $0.maxLevel = storedMaxLevel
+            $0.levelGenerator = HNSWLevelGenerator(state: generatorState)
+            $0.visited = [UInt32](repeating: 0, count: labelCount)
+            $0.visitedTag = 0
+            $0.queryScratch = [Scalar](repeating: .zero, count: dimensions)
+        }
+        return index
+    }
+
+    private static var maximumSerializedLevelCount: Int { 64 }
+
+    private static func validateLoadedGraph(
+        entries: [UInt64: Entry],
+        labelOrder: [UInt64],
+        connections: [[[Int]]],
+        entryPoint: Int?,
+        maxLevel: Int,
+        m: Int
+    ) throws {
+        guard entries.count == labelOrder.count, connections.count == labelOrder.count else {
+            throw HNSWError.loadFailed("Graph index metadata is inconsistent")
+        }
+
+        guard !labelOrder.isEmpty else {
+            guard entryPoint == nil, maxLevel == -1 else {
+                throw HNSWError.loadFailed("Empty graph index has invalid entry point")
+            }
+            return
+        }
+
+        guard let entryPoint else {
+            throw HNSWError.loadFailed("Graph index is missing entry point")
+        }
+        guard entryPoint >= 0, entryPoint < labelOrder.count else {
+            throw HNSWError.loadFailed("Graph index contains invalid entry point")
+        }
+
+        var observedMaxLevel = -1
+        for internalID in labelOrder.indices {
+            let label = labelOrder[internalID]
+            guard let entry = entries[label], entry.internalID == internalID else {
+                throw HNSWError.loadFailed("Graph index entry id is inconsistent")
+            }
+            guard entry.level >= 0, entry.level < maximumSerializedLevelCount else {
+                throw HNSWError.loadFailed("Graph index contains invalid level")
+            }
+            guard connections[internalID].count == entry.level + 1 else {
+                throw HNSWError.loadFailed("Graph index connection level count is inconsistent")
+            }
+            observedMaxLevel = max(observedMaxLevel, entry.level)
+
+            for level in connections[internalID].indices {
+                let neighbors = connections[internalID][level]
+                guard neighbors.count <= maximumConnections(at: level, m: m) else {
+                    throw HNSWError.loadFailed("Graph index exceeds configured connection limit")
+                }
+
+                var seenNeighbors = Set<Int>()
+                seenNeighbors.reserveCapacity(neighbors.count)
+                for neighborID in neighbors {
+                    guard neighborID >= 0, neighborID < labelOrder.count else {
+                        throw HNSWError.loadFailed("Graph index contains invalid neighbor id")
+                    }
+                    guard neighborID != internalID else {
+                        throw HNSWError.loadFailed("Graph index contains self edge")
+                    }
+                    guard connections[neighborID].indices.contains(level) else {
+                        throw HNSWError.loadFailed("Graph index references missing neighbor level")
+                    }
+                    guard seenNeighbors.insert(neighborID).inserted else {
+                        throw HNSWError.loadFailed("Graph index contains duplicate neighbor")
+                    }
+                }
+            }
+        }
+
+        guard observedMaxLevel == maxLevel else {
+            throw HNSWError.loadFailed("Graph index max level is inconsistent")
+        }
+        guard let entry = entries[labelOrder[entryPoint]], entry.level == maxLevel else {
+            throw HNSWError.loadFailed("Graph index entry point level is inconsistent")
+        }
+    }
+
+    private static func maximumConnections(at level: Int, m: Int) -> Int {
+        level == 0 ? max(1, m * 2) : max(1, m)
+    }
+
+    private static func loadFlat(
+        reader: inout FlatIndexReader,
+        version: UInt32,
+        dimensions: Int,
+        metric: DistanceMetric,
+        maxElements: Int
+    ) throws -> HNSWIndex {
+        guard version == 1 else {
+            throw HNSWError.loadFailed("Unsupported flat index version")
+        }
+        let storedDimensions = Int(try reader.readUInt32())
+        guard storedDimensions == dimensions else {
+            throw HNSWError.dimensionMismatch(expected: dimensions, got: storedDimensions)
+        }
+        let storedCapacity = Int(try reader.readUInt32())
+        let storedMetric = try reader.readString()
+        guard storedMetric == metric.rawValue else {
+            throw HNSWError.loadFailed("Stored metric \(storedMetric) does not match \(metric.rawValue)")
+        }
+
+        let capacity = max(maxElements, storedCapacity)
+        let index = try HNSWIndex(
+            dimensions: dimensions,
+            maxElements: max(1, capacity),
+            metric: metric,
+            configuration: .balanced
+        )
+        let labelCount = Int(try reader.readUInt32())
+        var loadedEntries: [UInt64: Entry] = [:]
+        var loadedLabelOrder: [UInt64] = []
+        var loadedVectorStorage: [Scalar] = []
+        var loadedConnections: [[[Int]]] = []
+        loadedEntries.reserveCapacity(labelCount)
+        loadedLabelOrder.reserveCapacity(labelCount)
+        loadedVectorStorage.reserveCapacity(labelCount * dimensions)
+        loadedConnections.reserveCapacity(labelCount)
+
+        var generator = HNSWLevelGenerator(seed: HNSWConfiguration.balanced.randomSeed)
+        let multiplier = 1.0 / Foundation.log(Double(max(2, HNSWConfiguration.balanced.m)))
+        for internalID in 0..<labelCount {
+            let label = try reader.readUInt64()
+            let deleted = try reader.readBool()
+            let offset = loadedVectorStorage.count
+            for _ in 0..<dimensions {
+                loadedVectorStorage.append(Scalar(try reader.readFloat()))
+            }
+            let level = generator.randomLevel(multiplier: multiplier)
+            loadedEntries[label] = Entry(
+                internalID: internalID,
+                offset: offset,
+                deleted: deleted,
+                level: level
+            )
+            loadedLabelOrder.append(label)
+            loadedConnections.append(Array(repeating: [], count: level + 1))
+        }
+        try reader.ensureFullyRead()
+
+        index.state.withLock {
+            $0.entries = loadedEntries
+            $0.labelOrder = loadedLabelOrder
+            $0.liveCount = loadedEntries.values.reduce(0) { count, entry in
+                entry.deleted ? count : count + 1
+            }
+            $0.vectorStorage = loadedVectorStorage
+            $0.connections = loadedConnections
+            $0.levelGenerator = generator
+            $0.visited = [UInt32](repeating: 0, count: labelCount)
+            $0.visitedTag = 0
+            $0.queryScratch = [Scalar](repeating: .zero, count: dimensions)
+            index.rebuildGraph(state: &$0)
+        }
+        return index
     }
 }
 
@@ -1182,59 +1498,592 @@ extension HNSWIndex {
         label: UInt64,
         state: inout State
     ) throws {
-        let offset: Int
+        let entry: Entry
+        let shouldRebuildGraph: Bool
         if let existing = state.entries[label] {
-            offset = existing.offset
+            entry = Entry(
+                internalID: existing.internalID,
+                offset: existing.offset,
+                deleted: false,
+                level: existing.level
+            )
+            if existing.deleted {
+                state.liveCount += 1
+            }
+            shouldRebuildGraph = existing.internalID < state.connections.count &&
+                state.connections[existing.internalID].contains(where: { !$0.isEmpty })
         } else {
-            guard state.entries.count < state.maximumElementCount else {
+            if state.entries.count < state.maximumElementCount {
+                let internalID = state.labelOrder.count
+                let offset = state.vectorStorage.count
+                let level = state.levelGenerator.randomLevel(multiplier: levelMultiplier)
+                entry = Entry(internalID: internalID, offset: offset, deleted: false, level: level)
+                for _ in 0..<dimensions {
+                    state.vectorStorage.append(.zero)
+                }
+                state.labelOrder.append(label)
+                state.connections.append(Array(repeating: [], count: level + 1))
+                state.visited.append(0)
+                state.liveCount += 1
+                shouldRebuildGraph = false
+            } else if configuration.allowReplaceDeleted,
+                      let reusable = reusableDeletedEntry(state: state) {
+                let level = state.levelGenerator.randomLevel(multiplier: levelMultiplier)
+                entry = Entry(
+                    internalID: reusable.entry.internalID,
+                    offset: reusable.entry.offset,
+                    deleted: false,
+                    level: level
+                )
+                state.entries.removeValue(forKey: reusable.label)
+                state.labelOrder[reusable.entry.internalID] = label
+                state.connections[reusable.entry.internalID] = Array(repeating: [], count: level + 1)
+                state.liveCount += 1
+                shouldRebuildGraph = true
+            } else {
                 throw HNSWError.capacityExceeded(
                     current: state.entries.count,
                     maximum: state.maximumElementCount
                 )
             }
-            offset = state.vectorStorage.count
-            for _ in 0..<dimensions {
-                state.vectorStorage.append(.zero)
-            }
-            state.labelOrder.append(label)
         }
 
         state.vectorStorage.withUnsafeMutableBufferPointer { storage in
-            let destination = UnsafeMutableBufferPointer(start: storage.baseAddress! + offset, count: dimensions)
+            let destination = UnsafeMutableBufferPointer(start: storage.baseAddress! + entry.offset, count: dimensions)
             if metric.requiresNormalization {
                 normalizeVector(vector, into: destination)
             } else {
                 VectorOperations.copy(vector, into: destination)
             }
         }
-        state.entries[label] = Entry(offset: offset, deleted: false)
+        state.entries[label] = entry
+
+        if shouldRebuildGraph {
+            rebuildGraph(state: &state)
+        } else {
+            connectNewElement(entry.internalID, state: &state)
+        }
     }
 
     private func searchNormalized(
         _ query: UnsafeBufferPointer<Scalar>,
         k: Int,
-        state: State
+        state: inout State
     ) -> [SearchResult] {
-        var results: [SearchResult] = []
-        results.reserveCapacity(min(k, state.entries.count))
+        guard let entryPoint = state.entryPoint else { return [] }
+        var current = entryPoint
+        var currentDistance = distance(from: query, to: current, state: state)
 
-        state.vectorStorage.withUnsafeBufferPointer { storage in
-            for label in state.labelOrder {
-                guard let entry = state.entries[label], !entry.deleted else {
-                    continue
-                }
-                let vector = UnsafeBufferPointer(start: storage.baseAddress! + entry.offset, count: dimensions)
-                insertTopKSearchResult(
-                    SearchResult(
-                        label: label,
-                        distance: VectorOperations.distance(from: query, to: vector, metric: metric)
-                    ),
-                    into: &results,
-                    limit: k
+        if state.maxLevel > 0 {
+            for level in stride(from: state.maxLevel, through: 1, by: -1) {
+                let closest = greedySearchLayer(
+                    query,
+                    entryPoint: current,
+                    entryDistance: currentDistance,
+                    level: level,
+                    state: state
                 )
+                current = closest.internalID
+                currentDistance = closest.distance
             }
         }
-        return results
+
+        return searchLayer(
+            query,
+            entryPoint: current,
+            ef: max(state.efSearch, k),
+            level: 0,
+            includeDeleted: false,
+            state: &state
+        )
+        .prefix(k)
+        .map {
+            SearchResult(
+                label: $0.label,
+                distance: VectorOperations.publicDistance(fromComparisonDistance: $0.distance, metric: metric)
+            )
+        }
+    }
+
+    private var levelMultiplier: Double {
+        1.0 / Foundation.log(Double(max(2, configuration.m)))
+    }
+
+    private func maxConnections(at level: Int) -> Int {
+        level == 0 ? max(1, configuration.m * 2) : max(1, configuration.m)
+    }
+
+    private func newElementConnections(at level: Int) -> Int {
+        max(1, configuration.m)
+    }
+
+    private func connectNewElement(_ internalID: Int, state: inout State) {
+        guard let entry = entry(for: internalID, state: state) else { return }
+        guard let entryPoint = state.entryPoint else {
+            state.entryPoint = internalID
+            state.maxLevel = entry.level
+            return
+        }
+        guard hasLiveEntry(excluding: internalID, state: state) else {
+            state.entryPoint = internalID
+            state.maxLevel = entry.level
+            return
+        }
+
+        var current = entryPoint
+        var currentDistance = distanceBetween(internalID, current, state: state)
+        let previousMaxLevel = state.maxLevel
+
+        if entry.level < previousMaxLevel {
+            for level in stride(from: previousMaxLevel, through: entry.level + 1, by: -1) {
+                let closest = greedySearchNode(
+                    internalID,
+                    entryPoint: current,
+                    entryDistance: currentDistance,
+                    level: level,
+                    state: state
+                )
+                current = closest.internalID
+                currentDistance = closest.distance
+            }
+        }
+
+        let topLevel = min(entry.level, previousMaxLevel)
+        if topLevel >= 0 {
+            for level in stride(from: topLevel, through: 0, by: -1) {
+                let candidates = searchLayerForNode(
+                    internalID,
+                    entryPoint: current,
+                    ef: max(configuration.efConstruction, configuration.m),
+                    level: level,
+                    includeDeleted: false,
+                    state: &state
+                )
+                let selected = selectNeighborsForNode(
+                    internalID,
+                    candidates: candidates,
+                    limit: newElementConnections(at: level),
+                    state: state
+                )
+                setConnections(selected.map(\.internalID), for: internalID, at: level, state: &state)
+                for neighbor in selected {
+                    connectBidirectional(internalID, neighborID: neighbor.internalID, level: level, state: &state)
+                }
+                if let first = selected.first {
+                    current = first.internalID
+                    currentDistance = first.distance
+                }
+            }
+        }
+
+        if entry.level > previousMaxLevel {
+            state.entryPoint = internalID
+            state.maxLevel = entry.level
+        }
+    }
+
+    private func rebuildGraph(state: inout State) {
+        state.connections = state.labelOrder.enumerated().map { internalID, label in
+            let level = state.entries[label]?.level ?? 0
+            return Array(repeating: [], count: max(0, level) + 1)
+        }
+        state.entryPoint = nil
+        state.maxLevel = -1
+
+        for internalID in state.labelOrder.indices {
+            guard entry(for: internalID, state: state) != nil else { continue }
+            connectNewElement(internalID, state: &state)
+        }
+    }
+
+    private func greedySearchNode(
+        _ queryID: Int,
+        entryPoint: Int,
+        entryDistance: Float,
+        level: Int,
+        state: State
+    ) -> HNSWNeighborCandidate {
+        greedySearch(
+            entryPoint: entryPoint,
+            entryDistance: entryDistance,
+            level: level,
+            state: state
+        ) { candidateID in
+            distanceBetween(queryID, candidateID, state: state)
+        }
+    }
+
+    private func greedySearchLayer(
+        _ query: UnsafeBufferPointer<Scalar>,
+        entryPoint: Int,
+        entryDistance: Float,
+        level: Int,
+        state: State
+    ) -> HNSWNeighborCandidate {
+        greedySearch(
+            entryPoint: entryPoint,
+            entryDistance: entryDistance,
+            level: level,
+            state: state
+        ) { candidateID in
+            distance(from: query, to: candidateID, state: state)
+        }
+    }
+
+    private func greedySearch(
+        entryPoint: Int,
+        entryDistance: Float,
+        level: Int,
+        state: State,
+        distanceToCandidate: (Int) -> Float
+    ) -> HNSWNeighborCandidate {
+        var current = HNSWNeighborCandidate(
+            internalID: entryPoint,
+            label: label(for: entryPoint, state: state),
+            distance: entryDistance
+        )
+        var changed = true
+        while changed {
+            changed = false
+            for neighborID in connections(for: current.internalID, at: level, state: state) {
+                let candidate = HNSWNeighborCandidate(
+                    internalID: neighborID,
+                    label: label(for: neighborID, state: state),
+                    distance: distanceToCandidate(neighborID)
+                )
+                if isCloserHNSWCandidate(candidate, than: current) {
+                    current = candidate
+                    changed = true
+                }
+            }
+        }
+        return current
+    }
+
+    private func searchLayerForNode(
+        _ queryID: Int,
+        entryPoint: Int,
+        ef: Int,
+        level: Int,
+        includeDeleted: Bool,
+        state: inout State
+    ) -> [HNSWNeighborCandidate] {
+        searchLayerForNodeWithVisitedArray(
+            queryID,
+            entryPoint: entryPoint,
+            entryDistance: distanceBetween(queryID, entryPoint, state: state),
+            ef: ef,
+            level: level,
+            includeDeleted: includeDeleted,
+            state: &state
+        )
+    }
+
+    private func searchLayerForNodeWithVisitedArray(
+        _ queryID: Int,
+        entryPoint: Int,
+        entryDistance: Float,
+        ef: Int,
+        level: Int,
+        includeDeleted: Bool,
+        state: inout State
+    ) -> [HNSWNeighborCandidate] {
+        let effectiveEF = max(1, ef)
+        let tag = nextVisitedTag(state: &state)
+
+        var candidateQueue = BinaryHeap<HNSWNeighborCandidate>(
+            hasHigherPriority: isCloserHNSWCandidate
+        )
+        var nearest = BinaryHeap<HNSWNeighborCandidate>(
+            hasHigherPriority: isFartherHNSWCandidate
+        )
+        candidateQueue.reserveCapacity(effectiveEF)
+        nearest.reserveCapacity(effectiveEF)
+
+        let entry = HNSWNeighborCandidate(
+            internalID: entryPoint,
+            label: label(for: entryPoint, state: state),
+            distance: entryDistance
+        )
+        markVisited(entryPoint, tag: tag, state: &state)
+        candidateQueue.push(entry)
+        if includeDeleted || !isDeleted(entryPoint, state: state) {
+            nearest.push(entry)
+        }
+
+        while let current = candidateQueue.pop() {
+            let lowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+            if current.distance > lowerBound, nearest.count >= effectiveEF {
+                break
+            }
+
+            for neighborID in connections(for: current.internalID, at: level, state: state) {
+                guard markVisited(neighborID, tag: tag, state: &state) else { continue }
+
+                let candidate = HNSWNeighborCandidate(
+                    internalID: neighborID,
+                    label: label(for: neighborID, state: state),
+                    distance: distanceBetween(queryID, neighborID, state: state)
+                )
+                let candidateLowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+                if nearest.count < effectiveEF || candidate.distance < candidateLowerBound {
+                    candidateQueue.push(candidate)
+                    if includeDeleted || !isDeleted(neighborID, state: state) {
+                        nearest.push(candidate)
+                        if nearest.count > effectiveEF {
+                            nearest.pop()
+                        }
+                    }
+                }
+            }
+        }
+
+        return nearest.unorderedElements().sorted(by: isCloserHNSWCandidate)
+    }
+
+    private func searchLayer(
+        _ query: UnsafeBufferPointer<Scalar>,
+        entryPoint: Int,
+        ef: Int,
+        level: Int,
+        includeDeleted: Bool,
+        state: inout State
+    ) -> [HNSWNeighborCandidate] {
+        searchLayerForQueryWithVisitedArray(
+            query,
+            entryPoint: entryPoint,
+            entryDistance: distance(from: query, to: entryPoint, state: state),
+            ef: ef,
+            level: level,
+            includeDeleted: includeDeleted,
+            state: &state
+        )
+    }
+
+    private func searchLayerForQueryWithVisitedArray(
+        _ query: UnsafeBufferPointer<Scalar>,
+        entryPoint: Int,
+        entryDistance: Float,
+        ef: Int,
+        level: Int,
+        includeDeleted: Bool,
+        state: inout State
+    ) -> [HNSWNeighborCandidate] {
+        let effectiveEF = max(1, ef)
+        let tag = nextVisitedTag(state: &state)
+
+        var candidateQueue = BinaryHeap<HNSWNeighborCandidate>(
+            hasHigherPriority: isCloserHNSWCandidate
+        )
+        var nearest = BinaryHeap<HNSWNeighborCandidate>(
+            hasHigherPriority: isFartherHNSWCandidate
+        )
+
+        let entry = HNSWNeighborCandidate(
+            internalID: entryPoint,
+            label: label(for: entryPoint, state: state),
+            distance: entryDistance
+        )
+        markVisited(entryPoint, tag: tag, state: &state)
+        candidateQueue.push(entry)
+        if includeDeleted || !isDeleted(entryPoint, state: state) {
+            nearest.push(entry)
+        }
+
+        while let current = candidateQueue.pop() {
+            let lowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+            if current.distance > lowerBound, nearest.count >= effectiveEF {
+                break
+            }
+
+            for neighborID in connections(for: current.internalID, at: level, state: state) {
+                guard markVisited(neighborID, tag: tag, state: &state) else { continue }
+
+                let candidate = HNSWNeighborCandidate(
+                    internalID: neighborID,
+                    label: label(for: neighborID, state: state),
+                    distance: distance(from: query, to: neighborID, state: state)
+                )
+                let candidateLowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+                if nearest.count < effectiveEF || candidate.distance < candidateLowerBound {
+                    candidateQueue.push(candidate)
+                    if includeDeleted || !isDeleted(neighborID, state: state) {
+                        nearest.push(candidate)
+                        if nearest.count > effectiveEF {
+                            nearest.pop()
+                        }
+                    }
+                }
+            }
+        }
+
+        return nearest.unorderedElements().sorted(by: isCloserHNSWCandidate)
+    }
+
+    private func selectNeighborsForNode(
+        _ queryID: Int,
+        candidates: [HNSWNeighborCandidate],
+        limit: Int,
+        state: State
+    ) -> [HNSWNeighborCandidate] {
+        selectNeighbors(candidates: candidates, limit: limit, state: state)
+    }
+
+    private func selectNeighbors(
+        candidates: [HNSWNeighborCandidate],
+        limit: Int,
+        state: State
+    ) -> [HNSWNeighborCandidate] {
+        guard limit > 0 else { return [] }
+
+        var selected: [HNSWNeighborCandidate] = []
+        selected.reserveCapacity(min(limit, candidates.count))
+        for candidate in candidates.sorted(by: isCloserHNSWCandidate) {
+            guard selected.count < limit else { break }
+            var isDiverse = true
+            for existing in selected {
+                let neighborDistance = distanceBetween(candidate.internalID, existing.internalID, state: state)
+                if neighborDistance < candidate.distance {
+                    isDiverse = false
+                    break
+                }
+            }
+            if isDiverse {
+                selected.append(candidate)
+            }
+        }
+        return selected
+    }
+
+    private func hasLiveEntry(excluding excludedID: Int, state: State) -> Bool {
+        guard let excluded = entry(for: excludedID, state: state) else {
+            return state.liveCount > 0
+        }
+        return state.liveCount > (excluded.deleted ? 0 : 1)
+    }
+
+    private func reusableDeletedEntry(state: State) -> (label: UInt64, entry: Entry)? {
+        for label in state.labelOrder {
+            guard let entry = state.entries[label], entry.deleted else { continue }
+            return (label, entry)
+        }
+        return nil
+    }
+
+    private func connectBidirectional(
+        _ internalID: Int,
+        neighborID: Int,
+        level: Int,
+        state: inout State
+    ) {
+        guard internalID != neighborID else { return }
+        ensureConnectionStorage(for: neighborID, through: level, state: &state)
+        if !state.connections[neighborID][level].contains(internalID) {
+            state.connections[neighborID][level].append(internalID)
+        }
+
+        let maxConnections = maxConnections(at: level)
+        guard state.connections[neighborID][level].count > maxConnections else { return }
+
+        let candidates = state.connections[neighborID][level].map { candidateID in
+            HNSWNeighborCandidate(
+                internalID: candidateID,
+                label: label(for: candidateID, state: state),
+                distance: distanceBetween(neighborID, candidateID, state: state)
+            )
+        }
+        let selected = selectNeighborsForNode(
+            neighborID,
+            candidates: candidates,
+            limit: maxConnections,
+            state: state
+        )
+        state.connections[neighborID][level] = selected.map(\.internalID)
+    }
+
+    private func setConnections(
+        _ neighbors: [Int],
+        for internalID: Int,
+        at level: Int,
+        state: inout State
+    ) {
+        ensureConnectionStorage(for: internalID, through: level, state: &state)
+        state.connections[internalID][level] = neighbors.filter { $0 != internalID }
+    }
+
+    private func ensureConnectionStorage(for internalID: Int, through level: Int, state: inout State) {
+        while state.connections.count <= internalID {
+            state.connections.append([])
+        }
+        while state.connections[internalID].count <= level {
+            state.connections[internalID].append([])
+        }
+    }
+
+    private func connections(for internalID: Int, at level: Int, state: State) -> [Int] {
+        guard internalID >= 0,
+              internalID < state.connections.count,
+              level >= 0,
+              level < state.connections[internalID].count else {
+            return []
+        }
+        return state.connections[internalID][level]
+    }
+
+    private func nextVisitedTag(state: inout State) -> UInt32 {
+        if state.visitedTag == UInt32.max {
+            state.visited = [UInt32](repeating: 0, count: state.labelOrder.count)
+            state.visitedTag = 0
+        }
+        state.visitedTag += 1
+        return state.visitedTag
+    }
+
+    @discardableResult
+    private func markVisited(_ internalID: Int, tag: UInt32, state: inout State) -> Bool {
+        guard internalID >= 0, internalID < state.visited.count else { return false }
+        guard state.visited[internalID] != tag else { return false }
+        state.visited[internalID] = tag
+        return true
+    }
+
+    private func distanceBetween(_ lhsID: Int, _ rhsID: Int, state: State) -> Float {
+        state.vectorStorage.withUnsafeBufferPointer { storage in
+            let lhs = vector(for: lhsID, storage: storage)
+            let rhs = vector(for: rhsID, storage: storage)
+            return VectorOperations.comparisonDistance(from: lhs, to: rhs, metric: metric)
+        }
+    }
+
+    private func distance(
+        from query: UnsafeBufferPointer<Scalar>,
+        to internalID: Int,
+        state: State
+    ) -> Float {
+        state.vectorStorage.withUnsafeBufferPointer { storage in
+            let candidate = vector(for: internalID, storage: storage)
+            return VectorOperations.comparisonDistance(from: query, to: candidate, metric: metric)
+        }
+    }
+
+    private func vector(
+        for internalID: Int,
+        storage: UnsafeBufferPointer<Scalar>
+    ) -> UnsafeBufferPointer<Scalar> {
+        UnsafeBufferPointer(start: storage.baseAddress! + internalID * dimensions, count: dimensions)
+    }
+
+    private func entry(for internalID: Int, state: State) -> Entry? {
+        guard internalID >= 0, internalID < state.labelOrder.count else { return nil }
+        return state.entries[state.labelOrder[internalID]]
+    }
+
+    private func label(for internalID: Int, state: State) -> UInt64 {
+        state.labelOrder[internalID]
+    }
+
+    private func isDeleted(_ internalID: Int, state: State) -> Bool {
+        entry(for: internalID, state: state)?.deleted ?? true
     }
 }
 
@@ -1282,14 +2131,15 @@ private struct FlatIndexWriter {
 }
 
 private struct FlatIndexReader {
+    static let flatMagic: UInt64 = 0x414C_4657_534E_4853
+    static let graphMagic: UInt64 = 0x4652_4757_534E_4853
+
     let data: Data
     var offset = 0
 
-    mutating func readMagic() throws {
+    mutating func readMagic() throws -> UInt64 {
         let magic = try readUInt64()
-        guard magic == 0x414C_4657_534E_4853 else {
-            throw HNSWError.loadFailed("Invalid flat index magic")
-        }
+        return magic
     }
 
     mutating func readByte() throws -> UInt8 {
