@@ -1,19 +1,18 @@
 # SwiftHNSW
 
 A Swift vector search library for Hierarchical Navigable Small World style nearest-neighbor APIs.
-The default backend is implemented in Swift and supports WebAssembly builds. An optional C++ backend uses [hnswlib](https://github.com/nmslib/hnswlib) for native high-performance deployments.
+The production backend is implemented in Swift and supports WebAssembly builds. A separate C++ reference benchmark package uses [hnswlib](https://github.com/nmslib/hnswlib) only for performance comparison.
 
 ## Features
 
-- **Swift Backend by Default**: Builds without a C++ toolchain and works with Swift WebAssembly SDKs
-- **Optional C++ Backend**: Enable `CxxBackend` to use hnswlib on supported native platforms
+- **Swift Backend Only in Production**: Default builds do not include or compile C++ targets
+- **Reference C++ Benchmarks**: hnswlib is kept in a separate benchmark package for comparison only
 - **Fast Vector Search**: Nearest-neighbor queries through a stable Swift API
 - **Contiguous Runtime Storage**: Pure Swift stores Float32 and Float16 vectors in type-specific contiguous arenas and graph edges in a fixed-slot connection store
 - **Float16 Support**: Native half-precision for 50% memory reduction
 - **TurboQuant**: 4-bit vector quantization with HD³ rotation for 6-8x memory compression
 - **Multiple Distance Metrics**: L2 (Euclidean), Inner Product, and Cosine similarity
 - **Thread-Safe**: Sendable API with backend-specific synchronization
-- **SIMD Optimized C++ Path**: ARM NEON / x86 AVX acceleration for Float32, Float16, and TurboQuant when `CxxBackend` is enabled
 - **Batch Operations**: Efficient bulk add and search operations
 - **Persistence**: Save and load indexes to/from disk
 - **Swift 6 Ready**: Full Sendable conformance for modern concurrency
@@ -23,7 +22,7 @@ The default backend is implemented in Swift and supports WebAssembly builds. An 
 - Swift 6.2+
 - macOS 13+ / iOS 16+
 - Swift WebAssembly SDK for WASM builds
-- C++17 toolchain only when enabling `CxxBackend`
+- C++17 toolchain only for the separate reference benchmark package
 
 ## Installation
 
@@ -48,21 +47,21 @@ Then add `SwiftHNSW` to your target dependencies:
 
 ### Backend Selection
 
-SwiftHNSW builds the Swift backend by default:
+SwiftHNSW uses the Swift backend in production. The root package has no C++ target:
 
 ```bash
 swift build
+swift test
 swift build --swift-sdk swift-6.3.1-RELEASE_wasm
 ```
 
-Enable the hnswlib-backed C++ implementation explicitly on supported native platforms:
+Run the optional hnswlib reference comparison from its separate benchmark package:
 
 ```bash
-swift build --traits CxxBackend
-swift test --traits CxxBackend
+BACKEND_COMPARISON_ITERATIONS=5 swift run -c release --package-path Benchmarks/CxxBackendComparison CxxBackendComparison
 ```
 
-The Pure Swift backend is the portability baseline. The C++ backend remains an optional native accelerator until the Pure Swift backend reaches measured parity on the target workloads. See [Pure Swift Optimization Roadmap](Docs/PureSwiftOptimizationRoadmap.md).
+The Pure Swift backend is the portability and production baseline. The C++ code is retained only as a benchmark reference and is not part of default library builds.
 
 ## Quick Start
 
@@ -312,10 +311,10 @@ index.isEmpty    // Boolean check
 
 | Backend | Selection | Search behavior | Synchronization |
 |---------|-----------|-----------------|-----------------|
-| Swift backend | Default | Approximate HNSW graph search | Serialized state access with `Mutex` |
-| C++ backend | `CxxBackend` trait | Approximate HNSW search, O(log n) average | Serialized access through the bridge lock |
+| Swift backend | Root package default | Approximate HNSW graph search | Serialized state access with `Mutex` |
+| C++ reference | `Benchmarks/CxxBackendComparison` only | hnswlib reference search | Benchmark-local bridge lock / native hnswlib state |
 
-The two backends expose the same Swift API and typed errors. The Swift backend is the portable WebAssembly-capable HNSW implementation. The C++ backend remains an optional native accelerator for workloads where measured performance justifies the extra toolchain dependency.
+The root package exposes the Swift backend API and typed errors. The C++ reference is intentionally outside the production package graph.
 
 ## HNSW Algorithm
 
@@ -341,29 +340,16 @@ HNSW (Hierarchical Navigable Small World) is a graph-based approximate nearest n
 
 The Swift backend follows the same graph model with Swift-native storage: level 0 uses direct fixed-width neighbor slots keyed by internal ID, upper levels use compact fixed slots, and internal graph IDs are stored as `UInt32`.
 
-## C++ SIMD Optimization
+## C++ Reference Benchmark
 
-The optional C++ backend includes hand-optimized SIMD implementations:
-
-### ARM (Apple Silicon, iOS)
-- **Float32**: NEON intrinsics with 4x loop unrolling
-- **Float16**: Native `float16x8_t` operations with Float32 accumulation
-
-### x86_64 (Intel/AMD)
-- **Float32**: SSE/AVX with dimension-specific optimizations
-- **Float16**: F16C + AVX conversion instructions
-
-Both implementations use:
-- Dimension-specific dispatch (optimized paths for dim % 16, dim % 8)
-- Multiple accumulators to reduce dependency chains
-- Loop unrolling to improve instruction-level parallelism
+hnswlib is retained under `Benchmarks/CxxBackendComparison` to compare the Swift production backend against a native C++ reference. It is not a product dependency and is not compiled by `swift build` or `swift test` at the package root.
 
 ## Thread Safety
 
 `HNSWIndex` is thread-safe with the following guarantees:
 
 - **Swift backend**: State access is serialized with `Mutex`
-- **C++ backend**: C bridge access is serialized through the backend lock
+- **C++ reference**: Used only by the benchmark package
 - **Sendable**: Safe to use across actor boundaries
 
 ```swift
@@ -377,32 +363,49 @@ await withTaskGroup(of: [SearchResult].self) { group in
 }
 ```
 
-## C++ Backend Benchmarks
+## Reference Backend Benchmarks
 
 **Measurement methodology:**
 
-- **Platform**: Apple Silicon (arm64), macOS 15
-- **Build**: Release (`-Os`) via `xcodebuild -configuration Release ENABLE_TESTABILITY=YES`
-- **Backend**: C++ backend enabled with `CxxBackend`
-- **SIMD**: ARM NEON with FMA (`vfmaq_f32`) for L2 and Inner Product distance
+- **Platform**: Apple Silicon (arm64), macOS 26.5.1
+- **Swift**: 6.3.1 (`swift-6.3.1-RELEASE`)
+- **Build**: Release (`swift run -c release --package-path Benchmarks/CxxBackendComparison CxxBackendComparison`)
+- **Backends**: Swift production backend and hnswlib reference backend
 - **Data**: Random vectors sampled uniformly from [-1, 1]
-- **Ground truth**: Brute-force exact search (L2 for Float32/Float16, cosine for TurboQuant)
+- **Ground truth**: Brute-force exact L2 search
 - **Recall@k**: Fraction of true k-nearest neighbors found in the approximate result
 - **QPS**: Queries per second (single-threaded, excluding index construction)
-- **Warmup**: 1 query discarded before timing
-- **Timing**: `CFAbsoluteTimeGetCurrent()` wall-clock, averaged over all queries
-
-Run the C++ backend benchmarks with:
-
-```bash
-swift test --traits CxxBackend --filter ANNBenchmarks
-```
+- **Timing**: `ContinuousClock`, median and p95 over repeated full-query batches
 
 Run backend parity measurements with median and p95 search latency output:
 
 ```bash
-BACKEND_COMPARISON_BENCHMARK=1 BACKEND_COMPARISON_ITERATIONS=5 swift test --filter BackendComparisonBenchmarkTests
+BACKEND_COMPARISON_ITERATIONS=3 swift run -c release --package-path Benchmarks/CxxBackendComparison CxxBackendComparison
 ```
+
+### Swift vs C++ Reference Results
+
+The production Swift backend is within the target parity threshold and was faster than the hnswlib reference in these search measurements. Positive values in `Swift vs C++` mean Swift is faster.
+
+| Scalar | Case | efSearch | Swift latency | C++ latency | Swift vs C++ | Swift recall@10 | C++ recall@10 |
+|--------|------|---------:|--------------:|------------:|-------------:|----------------:|--------------:|
+| Float32 | 10k x 128 | 100 | 0.058 ms | 0.062 ms | 7.2% faster | 0.8186 | 0.8206 |
+| Float32 | 10k x 128 | 320 | 0.160 ms | 0.167 ms | 4.2% faster | 0.9838 | 0.9836 |
+| Float32 | 50k x 128 | 100 | 0.112 ms | 0.118 ms | 5.0% faster | 0.5515 | 0.5580 |
+| Float32 | 50k x 128 | 320 | 0.334 ms | 0.370 ms | 9.7% faster | 0.8355 | 0.8340 |
+| Float32 | 50k x 128 | 1000 | 0.946 ms | 1.009 ms | 6.3% faster | 0.9730 | 0.9735 |
+| Float16 | 10k x 128 | 100 | 0.056 ms | 0.058 ms | 3.5% faster | 0.8172 | 0.8188 |
+| Float16 | 10k x 128 | 320 | 0.148 ms | 0.159 ms | 6.7% faster | 0.9796 | 0.9802 |
+
+Build throughput:
+
+| Scalar | Case | Swift build | C++ build | Swift vs C++ |
+|--------|------|------------:|----------:|-------------:|
+| Float32 | 10k x 128 | 8,356 vectors/s | 8,052 vectors/s | 3.8% faster |
+| Float32 | 50k x 128 | 4,695 vectors/s | 4,519 vectors/s | 3.9% faster |
+| Float16 | 10k x 128 | 8,310 vectors/s | 7,945 vectors/s | 4.6% faster |
+
+The C++ reference remains useful as a regression comparison target, but it is not part of the production package graph.
 
 Run the Swift backend performance smoke tests with:
 
@@ -410,7 +413,7 @@ Run the Swift backend performance smoke tests with:
 SWIFT_BACKEND_PERF=1 swift test
 ```
 
-### Recall vs QPS Trade-off (128-dim, 10K vectors)
+### Swift Backend Recall vs QPS Trade-off (128-dim, 10K vectors)
 
 | efSearch | Recall@10 | QPS | Latency |
 |----------|-----------|-----|---------|
@@ -421,7 +424,7 @@ SWIFT_BACKEND_PERF=1 swift test
 | 160 | 92.7% | 9,839 | 0.102ms |
 | 320 | 98.1% | 5,544 | 0.180ms |
 
-### Scale Performance (128-dim, M=16, efConstruction=200, efSearch=100)
+### Swift Backend Scale Performance (128-dim, M=16, efConstruction=200, efSearch=100)
 
 | Vectors | Build Time | Build Rate | Search QPS | Latency | Index Size |
 |---------|------------|------------|------------|---------|------------|
@@ -483,9 +486,9 @@ do {
 
 ## License
 
-The optional C++ backend wraps [hnswlib](https://github.com/nmslib/hnswlib), which is licensed under Apache 2.0.
+The C++ reference benchmark wraps [hnswlib](https://github.com/nmslib/hnswlib), which is licensed under Apache 2.0.
 
 ## Acknowledgments
 
-- [hnswlib](https://github.com/nmslib/hnswlib) - Optional C++ backend
+- [hnswlib](https://github.com/nmslib/hnswlib) - C++ reference benchmark backend
 - [Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs](https://arxiv.org/abs/1603.09320) - Original HNSW paper

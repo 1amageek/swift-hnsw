@@ -1,4 +1,3 @@
-#if !HNSWLIB_BACKEND
 import Testing
 @testable import SwiftHNSW
 
@@ -85,4 +84,3 @@ struct HNSWConnectionStoreTests {
         #expect(store.levels(for: 0) == [[1, 2, 3], [1, 3]])
     }
 }
-#endif

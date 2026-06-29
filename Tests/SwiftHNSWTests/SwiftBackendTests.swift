@@ -1,4 +1,3 @@
-#if !HNSWLIB_BACKEND
 import Foundation
 import Testing
 @testable import SwiftHNSW
@@ -538,4 +537,3 @@ private struct TestGraphPayloadWriter {
         data.append(contentsOf: value.utf8)
     }
 }
-#endif

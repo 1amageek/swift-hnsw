@@ -3,9 +3,6 @@
 
 import Testing
 import Foundation
-#if HNSWLIB_BACKEND && canImport(hnswlib)
-import hnswlib
-#endif
 @testable import SwiftHNSW
 
 private func removeTemporaryFile(atPath path: String) {
@@ -91,117 +88,6 @@ struct ScalarQuantizerTests {
         #expect(mse < 0.001, "Per-dim MSE should be bounded")
     }
 }
-
-// MARK: - HD³ Rotation Tests
-
-#if HNSWLIB_BACKEND && canImport(hnswlib)
-@Suite("HD3 Rotation Tests")
-struct HD3RotationTests {
-
-    @Test("Distance preservation for power-of-2 dim")
-    func distancePreservationPow2() throws {
-        try verifyDistancePreservation(d: 128, expectedRecall: 1.0)
-    }
-
-    @Test("Distance preservation for non-power-of-2 dim")
-    func distancePreservationNonPow2() throws {
-        try verifyDistancePreservation(d: 768, expectedRecall: 1.0)
-    }
-
-    @Test("Coordinate distribution matches N(0, 1/p)")
-    func coordinateDistribution() {
-        let d = 768
-        let sq = ScalarQuantizer(bitWidth: 4, dimension: 1024) // p=1024
-        let encoder = sq.centroids.withUnsafeBufferPointer { cBuf in
-            sq.boundaries.withUnsafeBufferPointer { bBuf in
-                hnsw_tq_encoder_create(d, 4, cBuf.baseAddress!, Int32(sq.numCentroids),
-                                        bBuf.baseAddress!, Int32(sq.boundaries.count), 42)
-            }
-        }!
-        defer { hnsw_tq_encoder_destroy(encoder) }
-        let p = hnsw_tq_encoder_padded_dim(encoder)
-
-        var allCoords: [Float] = []
-        for _ in 0..<500 {
-            var v = (0..<d).map { _ in Float.random(in: -1...1) }
-            let norm = v.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
-            v = v.map { $0 / norm }
-
-            var rotated = [Float](repeating: 0, count: p)
-            v.withUnsafeBufferPointer { vBuf in
-                rotated.withUnsafeMutableBufferPointer { rBuf in
-                    hnsw_tq_encoder_rotate_query(encoder, vBuf.baseAddress!, rBuf.baseAddress!)
-                }
-            }
-            allCoords.append(contentsOf: rotated)
-        }
-
-        let mean = allCoords.reduce(Float(0), +) / Float(allCoords.count)
-        let variance = allCoords.reduce(Float(0)) { $0 + ($1 - mean) * ($1 - mean) } / Float(allCoords.count)
-        let expectedVar: Float = 1.0 / Float(p)
-
-        #expect(abs(mean) < 0.01, "Mean should be ~0, got \(mean)")
-        let ratio = variance / expectedVar
-        #expect(ratio > 0.9 && ratio < 1.1, "Variance ratio should be ~1.0, got \(ratio)")
-    }
-
-    private func verifyDistancePreservation(d: Int, expectedRecall: Double) throws {
-        var p = 1; while p < d { p *= 2 }
-        let sq = ScalarQuantizer(bitWidth: 4, dimension: p)
-        let encoder = sq.centroids.withUnsafeBufferPointer { cBuf in
-            sq.boundaries.withUnsafeBufferPointer { bBuf in
-                hnsw_tq_encoder_create(d, 4, cBuf.baseAddress!, Int32(sq.numCentroids),
-                                        bBuf.baseAddress!, Int32(sq.boundaries.count), 42)
-            }
-        }!
-        defer { hnsw_tq_encoder_destroy(encoder) }
-        let actualP = hnsw_tq_encoder_padded_dim(encoder)
-
-        let n = 200
-        let k = 10
-        let vectors = (0..<n).map { _ in (0..<d).map { _ in Float.random(in: -1...1) } }
-
-        var rotated = [[Float]](repeating: [], count: n)
-        for i in 0..<n {
-            var r = [Float](repeating: 0, count: actualP)
-            vectors[i].withUnsafeBufferPointer { vBuf in
-                r.withUnsafeMutableBufferPointer { rBuf in
-                    hnsw_tq_encoder_rotate_query(encoder, vBuf.baseAddress!, rBuf.baseAddress!)
-                }
-            }
-            rotated[i] = r
-        }
-
-        // Cosine ground truth
-        let q = vectors[0]
-        let normQ = q.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
-        let cosineRank = (1..<n).map { i -> (Int, Float) in
-            let v = vectors[i]
-            let normV = v.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
-            var dot: Float = 0
-            for j in 0..<d { dot += q[j] * v[j] }
-            return (i, 1.0 - dot / (normQ * normV))
-        }.sorted { $0.1 < $1.1 }
-
-        // Rotated L2 rank (all p coordinates)
-        let rotRank = (1..<n).map { i -> (Int, Float) in
-            var sum: Float = 0
-            for j in 0..<actualP {
-                let diff = rotated[0][j] - rotated[i][j]
-                sum += diff * diff
-            }
-            return (i, sum)
-        }.sorted { $0.1 < $1.1 }
-
-        let cosineTop = Set(cosineRank.prefix(k).map { $0.0 })
-        let rotTop = Set(rotRank.prefix(k).map { $0.0 })
-        let recall = Double(cosineTop.intersection(rotTop).count) / Double(k)
-
-        #expect(recall >= expectedRecall,
-                "d=\(d): cosine vs rotL2 recall should be >= \(expectedRecall), got \(recall)")
-    }
-}
-#endif
 
 // MARK: - TurboQuantIndex Tests
 
