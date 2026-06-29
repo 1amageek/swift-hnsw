@@ -8,6 +8,7 @@ The default backend is implemented in Swift and supports WebAssembly builds. An 
 - **Swift Backend by Default**: Builds without a C++ toolchain and works with Swift WebAssembly SDKs
 - **Optional C++ Backend**: Enable `CxxBackend` to use hnswlib on supported native platforms
 - **Fast Vector Search**: Nearest-neighbor queries through a stable Swift API
+- **Contiguous Runtime Storage**: Pure Swift stores comparison vectors in `Float` memory and graph edges in a fixed-slot connection store
 - **Float16 Support**: Native half-precision for 50% memory reduction
 - **TurboQuant**: 4-bit vector quantization with HD³ rotation for 6-8x memory compression
 - **Multiple Distance Metrics**: L2 (Euclidean), Inner Product, and Cosine similarity
@@ -60,6 +61,8 @@ Enable the hnswlib-backed C++ implementation explicitly on supported native plat
 swift build --traits CxxBackend
 swift test --traits CxxBackend
 ```
+
+The Pure Swift backend is the portability baseline. The C++ backend remains an optional native accelerator until the Pure Swift backend reaches measured parity on the target workloads. See [Pure Swift Optimization Roadmap](Docs/PureSwiftOptimizationRoadmap.md).
 
 ## Quick Start
 

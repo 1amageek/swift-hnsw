@@ -1,20 +1,15 @@
-struct BinaryHeap<Element> {
-    private var elements: [Element] = []
-    private let hasHigherPriority: (Element, Element) -> Bool
+struct HNSWNearestCandidateHeap: Sendable {
+    private var elements: [HNSWNeighborCandidate] = []
 
-    init(hasHigherPriority: @escaping (Element, Element) -> Bool) {
-        self.hasHigherPriority = hasHigherPriority
+    var count: Int {
+        elements.count
     }
 
     var isEmpty: Bool {
         elements.isEmpty
     }
 
-    var count: Int {
-        elements.count
-    }
-
-    var peek: Element? {
+    var peek: HNSWNeighborCandidate? {
         elements.first
     }
 
@@ -22,14 +17,22 @@ struct BinaryHeap<Element> {
         elements.reserveCapacity(minimumCapacity)
     }
 
-    mutating func push(_ element: Element) {
+    @inline(__always)
+    mutating func push(_ element: HNSWNeighborCandidate) {
         elements.append(element)
         siftUp(from: elements.count - 1)
     }
 
     @discardableResult
-    mutating func pop() -> Element? {
+    @inline(__always)
+    mutating func pop() -> HNSWNeighborCandidate? {
         guard !elements.isEmpty else { return nil }
+        return popUnchecked()
+    }
+
+    @inline(__always)
+    mutating func popUnchecked() -> HNSWNeighborCandidate {
+        precondition(!elements.isEmpty, "Heap must not be empty")
         guard elements.count > 1 else {
             return elements.removeLast()
         }
@@ -40,20 +43,22 @@ struct BinaryHeap<Element> {
         return value
     }
 
-    func unorderedElements() -> [Element] {
+    func unorderedElements() -> [HNSWNeighborCandidate] {
         elements
     }
 
+    @inline(__always)
     private mutating func siftUp(from index: Int) {
         var child = index
         var parent = parentIndex(of: child)
-        while child > 0, hasHigherPriority(elements[child], elements[parent]) {
+        while child > 0, isCloserHNSWCandidate(elements[child], than: elements[parent]) {
             elements.swapAt(child, parent)
             child = parent
             parent = parentIndex(of: child)
         }
     }
 
+    @inline(__always)
     private mutating func siftDown(from index: Int) {
         var parent = index
         while true {
@@ -61,10 +66,10 @@ struct BinaryHeap<Element> {
             let right = rightChildIndex(of: parent)
             var candidate = parent
 
-            if left < elements.count, hasHigherPriority(elements[left], elements[candidate]) {
+            if left < elements.count, isCloserHNSWCandidate(elements[left], than: elements[candidate]) {
                 candidate = left
             }
-            if right < elements.count, hasHigherPriority(elements[right], elements[candidate]) {
+            if right < elements.count, isCloserHNSWCandidate(elements[right], than: elements[candidate]) {
                 candidate = right
             }
             guard candidate != parent else { return }
@@ -74,14 +79,17 @@ struct BinaryHeap<Element> {
         }
     }
 
+    @inline(__always)
     private func parentIndex(of index: Int) -> Int {
         (index - 1) / 2
     }
 
+    @inline(__always)
     private func leftChildIndex(of index: Int) -> Int {
         index * 2 + 1
     }
 
+    @inline(__always)
     private func rightChildIndex(of index: Int) -> Int {
         index * 2 + 2
     }

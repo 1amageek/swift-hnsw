@@ -63,6 +63,23 @@ struct VectorOperationsTests {
         #expect(innerProduct == -219)
     }
 
+    @Test("Float16 distance accumulates in Float precision")
+    func float16DistanceAccumulatesInFloatPrecision() {
+        let lhs = [Float16](repeating: Float16(0.1), count: 1024)
+        let rhs = lhs
+
+        let innerProductDistance = lhs.withUnsafeBufferPointer { lhsBuffer in
+            rhs.withUnsafeBufferPointer { rhsBuffer in
+                VectorOperations.distance(from: lhsBuffer, to: rhsBuffer, metric: .innerProduct)
+            }
+        }
+        let expectedDot = lhs.reduce(Float(0)) { partial, value in
+            partial + Float(value) * Float(value)
+        }
+
+        #expect(abs(innerProductDistance - (1 - expectedDot)) < 0.0001)
+    }
+
     @Test("Float16 SIMD normalization keeps unit length across tail")
     func float16SIMDNormalizeHandlesTail() {
         let vector: [Float16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
