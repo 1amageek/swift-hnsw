@@ -95,6 +95,22 @@ struct HNSWConnectionStore: Sendable {
         return upperNeighbors[storageIndex]
     }
 
+    @inline(__always)
+    func level0NeighborStorageRange(for internalID: HNSWInternalID) -> Range<Int> {
+        let nodeIndex = Int(internalID)
+        guard isValidNode(nodeIndex), nodeLevelCounts[nodeIndex] > 0 else {
+            return 0..<0
+        }
+        let count = level0NeighborCounts[nodeIndex]
+        let offset = nodeIndex * level0Capacity
+        return offset..<(offset + count)
+    }
+
+    @inline(__always)
+    func level0NeighborInStorage(at storageIndex: Int) -> HNSWInternalID {
+        level0Neighbors[storageIndex]
+    }
+
     func neighbor(at neighborIndex: Int, for internalID: HNSWInternalID, at level: Int) -> HNSWInternalID? {
         let nodeIndex = Int(internalID)
         guard isValidNode(nodeIndex),

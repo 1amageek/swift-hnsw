@@ -1,58 +1,49 @@
-struct HNSWNearestCandidateHeap: Sendable {
-    private var elements: [HNSWNeighborCandidate] = []
+struct HNSWFixedNearestCandidateHeap {
+    private var storage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>
+    private(set) var count: Int = 0
 
-    var count: Int {
-        elements.count
+    init(storage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>) {
+        self.storage = storage
     }
 
     var isEmpty: Bool {
-        elements.isEmpty
+        count == 0
     }
 
     var peek: HNSWNeighborCandidate? {
-        elements.first
-    }
-
-    mutating func reserveCapacity(_ minimumCapacity: Int) {
-        elements.reserveCapacity(minimumCapacity)
+        guard count > 0 else { return nil }
+        return storage[0]
     }
 
     @inline(__always)
     mutating func push(_ element: HNSWNeighborCandidate) {
-        elements.append(element)
-        siftUp(from: elements.count - 1)
-    }
-
-    @discardableResult
-    @inline(__always)
-    mutating func pop() -> HNSWNeighborCandidate? {
-        guard !elements.isEmpty else { return nil }
-        return popUnchecked()
+        precondition(count < storage.count, "Candidate queue capacity is exhausted")
+        storage[count] = element
+        count += 1
+        siftUp(from: count - 1)
     }
 
     @inline(__always)
     mutating func popUnchecked() -> HNSWNeighborCandidate {
-        precondition(!elements.isEmpty, "Heap must not be empty")
-        guard elements.count > 1 else {
-            return elements.removeLast()
+        precondition(count > 0, "Heap must not be empty")
+        if count == 1 {
+            count = 0
+            return storage[0]
         }
 
-        let value = elements[0]
-        elements[0] = elements.removeLast()
+        let value = storage[0]
+        count -= 1
+        storage[0] = storage[count]
         siftDown(from: 0)
         return value
-    }
-
-    func unorderedElements() -> [HNSWNeighborCandidate] {
-        elements
     }
 
     @inline(__always)
     private mutating func siftUp(from index: Int) {
         var child = index
         var parent = parentIndex(of: child)
-        while child > 0, isCloserHNSWCandidate(elements[child], than: elements[parent]) {
-            elements.swapAt(child, parent)
+        while child > 0, isCloserHNSWCandidate(storage[child], than: storage[parent]) {
+            storage.swapAt(child, parent)
             child = parent
             parent = parentIndex(of: child)
         }
@@ -66,15 +57,15 @@ struct HNSWNearestCandidateHeap: Sendable {
             let right = rightChildIndex(of: parent)
             var candidate = parent
 
-            if left < elements.count, isCloserHNSWCandidate(elements[left], than: elements[candidate]) {
+            if left < count, isCloserHNSWCandidate(storage[left], than: storage[candidate]) {
                 candidate = left
             }
-            if right < elements.count, isCloserHNSWCandidate(elements[right], than: elements[candidate]) {
+            if right < count, isCloserHNSWCandidate(storage[right], than: storage[candidate]) {
                 candidate = right
             }
             guard candidate != parent else { return }
 
-            elements.swapAt(parent, candidate)
+            storage.swapAt(parent, candidate)
             parent = candidate
         }
     }

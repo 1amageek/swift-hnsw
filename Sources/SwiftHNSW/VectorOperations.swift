@@ -613,6 +613,67 @@ enum VectorOperations {
     }
 
     @inline(__always)
+    @_specialize(where Scalar == Float)
+    @_specialize(where Scalar == Float16)
+    static func squaredL2ComparisonDistance<Scalar: HNSWScalar>(
+        from lhs: UnsafePointer<Scalar>,
+        to rhs: UnsafePointer<Scalar>,
+        count: Int
+    ) -> Float {
+        if Scalar.self == Float.self {
+            guard count > 0 else { return 0 }
+            let lhsFloats = UnsafeRawPointer(lhs).assumingMemoryBound(to: Float.self)
+            let rhsFloats = UnsafeRawPointer(rhs).assumingMemoryBound(to: Float.self)
+            return squaredL2Distance(lhsFloats, rhsFloats, count: count)
+        }
+
+        if Scalar.self == Float16.self {
+            guard count > 0 else { return 0 }
+            let lhsHalves = UnsafeRawPointer(lhs).assumingMemoryBound(to: Float16.self)
+            let rhsHalves = UnsafeRawPointer(rhs).assumingMemoryBound(to: Float16.self)
+            return squaredL2Distance(lhsHalves, rhsHalves, count: count)
+        }
+
+        var sum: Float = 0
+        for index in 0..<count {
+            let diff = lhs[index].hnswFloatValue - rhs[index].hnswFloatValue
+            sum += diff * diff
+        }
+        return sum
+    }
+
+    @inline(__always)
+    @_specialize(where Scalar == Float)
+    @_specialize(where Scalar == Float16)
+    static func innerProductComparisonDistance<Scalar: HNSWScalar>(
+        from lhs: UnsafePointer<Scalar>,
+        to rhs: UnsafePointer<Scalar>,
+        count: Int
+    ) -> Float {
+        if Scalar.self == Float.self {
+            guard count > 0 else { return 1 }
+            let lhsFloats = UnsafeRawPointer(lhs).assumingMemoryBound(to: Float.self)
+            let rhsFloats = UnsafeRawPointer(rhs).assumingMemoryBound(to: Float.self)
+            return 1 - dotProduct(lhsFloats, rhsFloats, count: count)
+        }
+
+        if Scalar.self == Float16.self {
+            guard count > 0 else { return 1 }
+            let lhsHalves = UnsafeRawPointer(lhs).assumingMemoryBound(to: Float16.self)
+            let rhsHalves = UnsafeRawPointer(rhs).assumingMemoryBound(to: Float16.self)
+            return 1 - dotProduct(lhsHalves, rhsHalves, count: count)
+        }
+
+        var dotProduct: Float = 0
+        for index in 0..<count {
+            dotProduct += lhs[index].hnswFloatValue * rhs[index].hnswFloatValue
+        }
+        return 1 - dotProduct
+    }
+
+    @inline(__always)
+    @_specialize(where Scalar == Float)
+    @_specialize(where Scalar == Float16)
     static func comparisonDistance<Scalar: HNSWScalar>(
         from lhs: UnsafePointer<Scalar>,
         to rhs: UnsafePointer<Scalar>,

@@ -178,6 +178,71 @@ struct SwiftBackendHNSWTests {
         #expect(try loaded.search([2, 0], k: 2).map(\.label) == [1, 2])
     }
 
+    @Test("Borrowed vector access matches materialized vector semantics")
+    func borrowedVectorAccessMatchesMaterializedVectorSemantics() throws {
+        let floatIndex = try HNSWIndex<Float>(dimensions: 3, maxElements: 2, metric: .l2)
+        try floatIndex.add([1, 2, 3], label: 10)
+
+        let floatSum = try #require(floatIndex.withVector(label: 10) { vector in
+            vector.reduce(0, +)
+        })
+        #expect(floatSum == 6)
+        #expect(floatIndex.getVector(label: 10) == [1, 2, 3])
+
+        let halfIndex = try HNSWIndex<Float16>(dimensions: 3, maxElements: 2, metric: .l2)
+        try halfIndex.add([1, 2, 3], label: 20)
+        try halfIndex.markDeleted(label: 20)
+
+        let missing = halfIndex.withVector(label: 20) { vector in
+            vector.count
+        }
+        #expect(missing == nil)
+    }
+
+    @Test("Search into caller buffer preserves ordering and count semantics")
+    func searchIntoCallerBufferPreservesOrderingAndCountSemantics() throws {
+        let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 4, metric: .l2)
+        try index.add([0, 0], label: 10)
+        try index.add([2, 0], label: 20)
+        try index.add([4, 0], label: 30)
+
+        var exactBuffer = [SearchResult](repeating: SearchResult(label: 0, distance: 0), count: 2)
+        let exactCount = try exactBuffer.withUnsafeMutableBufferPointer { output in
+            try index.search([1, 0], k: 2, into: output)
+        }
+
+        #expect(exactCount == 2)
+        #expect(exactBuffer.map(\.label) == [10, 20])
+
+        var oversizedBuffer = [SearchResult](repeating: SearchResult(label: 0, distance: 0), count: 5)
+        let oversizedCount = try oversizedBuffer.withUnsafeMutableBufferPointer { output in
+            try index.search([1, 0], k: 5, into: output)
+        }
+
+        #expect(oversizedCount == 3)
+        #expect(oversizedBuffer.prefix(oversizedCount).map(\.label) == [10, 20, 30])
+
+        var undersizedBuffer = [SearchResult](repeating: SearchResult(label: 0, distance: 0), count: 1)
+        #expect(throws: HNSWError.self) {
+            try undersizedBuffer.withUnsafeMutableBufferPointer { output in
+                try index.search([1, 0], k: 2, into: output)
+            }
+        }
+    }
+
+    @Test("Visited tag wraparound keeps search correct", .timeLimit(.minutes(1)))
+    func visitedTagWraparoundKeepsSearchCorrect() throws {
+        let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 3, metric: .l2)
+        try index.add([0, 0], label: 10)
+        try index.add([1, 0], label: 20)
+        try index.add([2, 0], label: 30)
+
+        for _ in 0..<(Int(UInt16.max) + 4) {
+            let results = try index.search([0, 0], k: 2)
+            #expect(results.map(\.label) == [10, 20])
+        }
+    }
+
     @Test("Graph loader rejects invalid self edge")
     func graphLoaderRejectsInvalidSelfEdge() throws {
         let payload = invalidGraphPayloadWithSelfEdge()

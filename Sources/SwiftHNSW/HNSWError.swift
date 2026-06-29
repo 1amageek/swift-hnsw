@@ -11,6 +11,7 @@ public enum HNSWError: Error, Sendable {
     case loadFailed(String)
     case serializationFailed(String)
     case capacityExceeded(current: Int, maximum: Int)
+    case invalidArgument(String)
 }
 
 extension HNSWError: LocalizedError {
@@ -34,6 +35,8 @@ extension HNSWError: LocalizedError {
             return "Serialization failed: \(message)"
         case .capacityExceeded(let current, let maximum):
             return "Capacity exceeded: \(current) elements, maximum \(maximum)"
+        case .invalidArgument(let message):
+            return "Invalid argument: \(message)"
         }
     }
 }
@@ -59,6 +62,8 @@ extension HNSWError: Equatable {
             return a == b
         case (.capacityExceeded(let c1, let m1), .capacityExceeded(let c2, let m2)):
             return c1 == c2 && m1 == m2
+        case (.invalidArgument(let a), .invalidArgument(let b)):
+            return a == b
         default:
             return false
         }

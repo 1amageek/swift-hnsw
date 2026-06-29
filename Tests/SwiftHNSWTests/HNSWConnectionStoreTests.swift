@@ -22,6 +22,24 @@ struct HNSWConnectionStoreTests {
         #expect(store.levels(for: 0) == [[10, 11], [20]])
     }
 
+    @Test("Level zero storage access is isolated from upper levels")
+    func levelZeroStorageAccessIsIsolatedFromUpperLevels() {
+        var store = HNSWConnectionStore(m: 2)
+        store.appendNode(level: 2)
+        store.append(10, for: 0, at: 0)
+        store.append(11, for: 0, at: 0)
+        store.append(20, for: 0, at: 1)
+        store.append(30, for: 0, at: 2)
+
+        let range = store.level0NeighborStorageRange(for: 0)
+        let neighbors = range.map { store.level0NeighborInStorage(at: $0) }
+
+        #expect(neighbors == [10, 11])
+        #expect(store.neighborCount(for: 0, at: 1) == 1)
+        #expect(store.neighborCount(for: 0, at: 2) == 1)
+        #expect(store.level0NeighborStorageRange(for: 1).isEmpty)
+    }
+
     @Test("Replaces and resets node connections")
     func replacesAndResetsNodeConnections() {
         var store = HNSWConnectionStore(m: 2)

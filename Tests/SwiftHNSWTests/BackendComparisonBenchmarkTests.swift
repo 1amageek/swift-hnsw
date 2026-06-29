@@ -19,9 +19,11 @@ struct BackendComparisonBenchmarkTests {
 
     private struct SearchMeasurement {
         let efSearch: Int
-        let seconds: Double
-        let qps: Double
-        let latencyMilliseconds: Double
+        let medianSeconds: Double
+        let p95Seconds: Double
+        let medianQPS: Double
+        let medianLatencyMilliseconds: Double
+        let p95LatencyMilliseconds: Double
         let recall: Double
     }
 
@@ -30,6 +32,12 @@ struct BackendComparisonBenchmarkTests {
     #else
     private static let backendName = "swift-hnsw-simd"
     #endif
+
+    private var searchIterations: Int {
+        let rawValue = ProcessInfo.processInfo.environment["BACKEND_COMPARISON_ITERATIONS"]
+        guard let rawValue, let parsed = Int(rawValue) else { return 5 }
+        return max(1, parsed)
+    }
 
     @Test("Float32 backend comparison")
     func float32BackendComparison() throws {
@@ -192,18 +200,23 @@ struct BackendComparisonBenchmarkTests {
             return try index.search(firstQuery, k: benchmark.k)
         }
 
-        var results: [[SearchResult]] = []
-        let seconds = try measureSeconds {
-            results = try queries.withUnsafeBufferPointer { queryBuffer in
-                try index.searchBatch(queryBuffer, numQueries: benchmark.queryCount, k: benchmark.k)
+        var lastResults: [[SearchResult]] = []
+        var durations: [Double] = []
+        durations.reserveCapacity(searchIterations)
+        for _ in 0..<searchIterations {
+            let seconds = try measureSeconds {
+                lastResults = try queries.withUnsafeBufferPointer { queryBuffer in
+                    try index.searchBatch(queryBuffer, numQueries: benchmark.queryCount, k: benchmark.k)
+                }
             }
+            durations.append(seconds)
         }
 
         return searchMeasurement(
             efSearch: efSearch,
-            seconds: seconds,
+            durations: durations,
             queryCount: benchmark.queryCount,
-            results: results,
+            results: lastResults,
             groundTruth: groundTruth,
             k: benchmark.k
         )
@@ -222,18 +235,23 @@ struct BackendComparisonBenchmarkTests {
             return try index.search(firstQuery, k: benchmark.k)
         }
 
-        var results: [[SearchResult]] = []
-        let seconds = try measureSeconds {
-            results = try queries.withUnsafeBufferPointer { queryBuffer in
-                try index.searchBatch(queryBuffer, numQueries: benchmark.queryCount, k: benchmark.k)
+        var lastResults: [[SearchResult]] = []
+        var durations: [Double] = []
+        durations.reserveCapacity(searchIterations)
+        for _ in 0..<searchIterations {
+            let seconds = try measureSeconds {
+                lastResults = try queries.withUnsafeBufferPointer { queryBuffer in
+                    try index.searchBatch(queryBuffer, numQueries: benchmark.queryCount, k: benchmark.k)
+                }
             }
+            durations.append(seconds)
         }
 
         return searchMeasurement(
             efSearch: efSearch,
-            seconds: seconds,
+            durations: durations,
             queryCount: benchmark.queryCount,
-            results: results,
+            results: lastResults,
             groundTruth: groundTruth,
             k: benchmark.k
         )
@@ -241,18 +259,23 @@ struct BackendComparisonBenchmarkTests {
 
     private func searchMeasurement(
         efSearch: Int,
-        seconds: Double,
+        durations: [Double],
         queryCount: Int,
         results: [[SearchResult]],
         groundTruth: [[UInt64]],
         k: Int
     ) -> SearchMeasurement {
-        let qps = Double(queryCount) / max(seconds, .leastNonzeroMagnitude)
+        let medianSeconds = percentile(durations, percentile: 0.5)
+        let p95Seconds = percentile(durations, percentile: 0.95)
+        let medianLatency = medianSeconds * 1_000 / Double(queryCount)
+        let p95Latency = p95Seconds * 1_000 / Double(queryCount)
         return SearchMeasurement(
             efSearch: efSearch,
-            seconds: seconds,
-            qps: qps,
-            latencyMilliseconds: seconds * 1_000 / Double(queryCount),
+            medianSeconds: medianSeconds,
+            p95Seconds: p95Seconds,
+            medianQPS: Double(queryCount) / max(medianSeconds, .leastNonzeroMagnitude),
+            medianLatencyMilliseconds: medianLatency,
+            p95LatencyMilliseconds: p95Latency,
             recall: averageRecall(results: results, groundTruth: groundTruth, k: k)
         )
     }
@@ -291,9 +314,9 @@ struct BackendComparisonBenchmarkTests {
     ) {
         let buildVectorsPerSecond = Double(benchmark.vectorCount) / max(buildSeconds, .leastNonzeroMagnitude)
         print("")
-        print("backend_comparison backend=\(Self.backendName) scalar=\(scalar) case=\(benchmark.name) n=\(benchmark.vectorCount) d=\(benchmark.dimensions) q=\(benchmark.queryCount) k=\(benchmark.k) build_seconds=\(format(buildSeconds)) build_vectors_per_second=\(format(buildVectorsPerSecond))")
+        print("backend_comparison backend=\(Self.backendName) scalar=\(scalar) case=\(benchmark.name) n=\(benchmark.vectorCount) d=\(benchmark.dimensions) q=\(benchmark.queryCount) k=\(benchmark.k) iterations=\(searchIterations) build_seconds=\(format(buildSeconds)) build_vectors_per_second=\(format(buildVectorsPerSecond))")
         for measurement in measurements {
-            print("backend_comparison backend=\(Self.backendName) scalar=\(scalar) case=\(benchmark.name) ef_search=\(measurement.efSearch) search_seconds=\(format(measurement.seconds)) qps=\(format(measurement.qps)) latency_ms=\(format(measurement.latencyMilliseconds)) recall_at_\(benchmark.k)=\(format(measurement.recall))")
+            print("backend_comparison backend=\(Self.backendName) scalar=\(scalar) case=\(benchmark.name) ef_search=\(measurement.efSearch) search_seconds_median=\(format(measurement.medianSeconds)) search_seconds_p95=\(format(measurement.p95Seconds)) qps_median=\(format(measurement.medianQPS)) latency_ms_median=\(format(measurement.medianLatencyMilliseconds)) latency_ms_p95=\(format(measurement.p95LatencyMilliseconds)) recall_at_\(benchmark.k)=\(format(measurement.recall))")
         }
     }
 
@@ -429,6 +452,14 @@ struct BackendComparisonBenchmarkTests {
         let start = CFAbsoluteTimeGetCurrent()
         try body()
         return CFAbsoluteTimeGetCurrent() - start
+    }
+
+    private func percentile(_ values: [Double], percentile: Double) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        let boundedPercentile = min(max(percentile, 0), 1)
+        let index = Int((Double(sorted.count - 1) * boundedPercentile).rounded(.up))
+        return sorted[min(index, sorted.count - 1)]
     }
 
     private func format(_ value: Double) -> String {

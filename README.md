@@ -233,10 +233,23 @@ let allResults = try index.searchBatch(queries, k: 10)
 index.setEfSearch(100)  // Higher = better recall, slower search
 ```
 
+**Searching into caller-owned storage:**
+```swift
+var output = [SearchResult](repeating: SearchResult(label: 0, distance: 0), count: 10)
+let count = try output.withUnsafeMutableBufferPointer { results in
+    try index.search(queryVector, k: 10, into: results)
+}
+print(output.prefix(count))
+```
+
+Use `search(_:k:into:)` on latency-sensitive paths that already own a reusable
+result buffer. The standard `search(_:k:)` API remains the ergonomic option when
+an owned `[SearchResult]` is desired.
+
 ### Retrieving Vectors
 
 ```swift
-// Get the stored vector for a label
+// Materialize the stored vector as an Array for display or ownership transfer.
 if let vector: [Float] = index.getVector(label: 0) {
     print("Vector: \(vector)")
 }
@@ -244,6 +257,15 @@ if let vector: [Float] = index.getVector(label: 0) {
 // For Float16 index
 if let vector: [Float16] = indexF16.getVector(label: 0) {
     print("Vector: \(vector)")
+}
+```
+
+For performance-sensitive reads, borrow the stored vector instead of materializing
+an intermediate array:
+
+```swift
+let magnitude = index.withVector(label: 0) { vector in
+    vector.reduce(0) { $0 + $1 * $1 }.squareRoot()
 }
 ```
 
@@ -374,6 +396,12 @@ Run the C++ backend benchmarks with:
 
 ```bash
 swift test --traits CxxBackend --filter ANNBenchmarks
+```
+
+Run backend parity measurements with median and p95 search latency output:
+
+```bash
+BACKEND_COMPARISON_BENCHMARK=1 BACKEND_COMPARISON_ITERATIONS=5 swift test --filter BackendComparisonBenchmarkTests
 ```
 
 Run the Swift backend performance smoke tests with:
