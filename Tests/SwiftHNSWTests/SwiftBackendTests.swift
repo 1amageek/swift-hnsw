@@ -251,6 +251,15 @@ struct SwiftBackendHNSWTests {
             _ = try HNSWIndex<Float>.load(from: payload, dimensions: 1, metric: .l2)
         }
     }
+
+    @Test("Graph loader rejects invalid neighbor id")
+    func graphLoaderRejectsInvalidNeighborID() throws {
+        let payload = invalidGraphPayloadWithInvalidNeighborID()
+
+        #expect(throws: HNSWError.self) {
+            _ = try HNSWIndex<Float>.load(from: payload, dimensions: 1, metric: .l2)
+        }
+    }
 }
 
 @Suite("Swift TurboQuant Backend", .serialized)
@@ -458,6 +467,32 @@ private func invalidGraphPayloadWithSelfEdge() -> Data {
     writer.writeUInt32(1)
     writer.writeUInt32(1)
     writer.writeUInt32(0)
+    return writer.data
+}
+
+private func invalidGraphPayloadWithInvalidNeighborID() -> Data {
+    var writer = TestGraphPayloadWriter()
+    writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
+    writer.writeUInt32(2)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeString("l2")
+    writer.writeUInt32(16)
+    writer.writeUInt32(200)
+    writer.writeUInt32(50)
+    writer.writeUInt32(100)
+    writer.writeBool(false)
+    writer.writeUInt32(0)
+    writer.writeUInt32(0)
+    writer.writeUInt64(1)
+    writer.writeUInt32(1)
+    writer.writeUInt64(1)
+    writer.writeBool(false)
+    writer.writeUInt32(0)
+    writer.writeFloat(0)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
     return writer.data
 }
 

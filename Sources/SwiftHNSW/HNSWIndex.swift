@@ -2828,9 +2828,9 @@ extension HNSWIndex {
                         if nearest.count < effectiveEF {
                             nearest.push(candidate)
                         } else {
-                            nearest.replaceTop(with: candidate)
+                            nearest.replaceTopUnchecked(with: candidate)
                         }
-                        lowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+                        lowerBound = nearest.topDistanceUnchecked
                     }
                 }
             }
@@ -2896,9 +2896,9 @@ extension HNSWIndex {
                     if nearest.count < effectiveEF {
                         nearest.push(candidate)
                     } else {
-                        nearest.replaceTop(with: candidate)
+                        nearest.replaceTopUnchecked(with: candidate)
                     }
-                    lowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+                    lowerBound = nearest.topDistanceUnchecked
                 }
             }
         }
@@ -3055,9 +3055,9 @@ extension HNSWIndex {
                         if nearest.count < effectiveEF {
                             nearest.push(candidate)
                         } else {
-                            nearest.replaceTop(with: candidate)
+                            nearest.replaceTopUnchecked(with: candidate)
                         }
-                        lowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+                        lowerBound = nearest.topDistanceUnchecked
                     }
                 }
             }
@@ -3124,9 +3124,9 @@ extension HNSWIndex {
                     if nearest.count < effectiveEF {
                         nearest.push(candidate)
                     } else {
-                        nearest.replaceTop(with: candidate)
+                        nearest.replaceTopUnchecked(with: candidate)
                     }
-                    lowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+                    lowerBound = nearest.topDistanceUnchecked
                 }
             }
         }
@@ -3194,9 +3194,9 @@ extension HNSWIndex {
                     if nearest.count < effectiveEF {
                         nearest.push(candidate)
                     } else {
-                        nearest.replaceTop(with: candidate)
+                        nearest.replaceTopUnchecked(with: candidate)
                     }
-                    lowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+                    lowerBound = nearest.topDistanceUnchecked
                 }
             }
         }
@@ -3269,9 +3269,9 @@ extension HNSWIndex {
                     if nearest.count < effectiveEF {
                         nearest.push(candidate)
                     } else {
-                        nearest.replaceTop(with: candidate)
+                        nearest.replaceTopUnchecked(with: candidate)
                     }
-                    lowerBound = nearest.peek?.distance ?? Float.greatestFiniteMagnitude
+                    lowerBound = nearest.topDistanceUnchecked
                 }
             }
         }
@@ -3409,10 +3409,9 @@ extension HNSWIndex {
         tag: UInt16,
         visited: UnsafeMutableBufferPointer<UInt16>
     ) -> Bool {
-        let internalIndex = Int(internalID)
-        guard internalIndex < visited.count else { return false }
-        guard visited[internalIndex] != tag else { return false }
-        visited[internalIndex] = tag
+        let entry = visited.baseAddress! + Int(internalID)
+        guard entry.pointee != tag else { return false }
+        entry.pointee = tag
         return true
     }
 

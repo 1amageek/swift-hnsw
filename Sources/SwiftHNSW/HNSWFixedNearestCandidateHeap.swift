@@ -18,6 +18,11 @@ struct HNSWFixedNearestCandidateHeap {
     @inline(__always)
     mutating func push(_ element: HNSWNeighborCandidate) {
         precondition(count < storage.count, "Candidate queue capacity is exhausted")
+        pushUnchecked(element)
+    }
+
+    @inline(__always)
+    mutating func pushUnchecked(_ element: HNSWNeighborCandidate) {
         storage[count] = element
         count += 1
         siftUp(from: count - 1)
@@ -25,7 +30,6 @@ struct HNSWFixedNearestCandidateHeap {
 
     @inline(__always)
     mutating func popUnchecked() -> HNSWNeighborCandidate {
-        precondition(count > 0, "Heap must not be empty")
         if count == 1 {
             count = 0
             return storage[0]
@@ -41,33 +45,41 @@ struct HNSWFixedNearestCandidateHeap {
     @inline(__always)
     private mutating func siftUp(from index: Int) {
         var child = index
-        var parent = parentIndex(of: child)
-        while child > 0, isCloserHNSWCandidate(storage[child], than: storage[parent]) {
-            storage.swapAt(child, parent)
+        let value = storage[child]
+        while child > 0 {
+            let parent = parentIndex(of: child)
+            let parentValue = storage[parent]
+            guard isCloserHNSWCandidate(value, than: parentValue) else { break }
+            storage[child] = parentValue
             child = parent
-            parent = parentIndex(of: child)
         }
+        storage[child] = value
     }
 
     @inline(__always)
     private mutating func siftDown(from index: Int) {
         var parent = index
+        let value = storage[parent]
         while true {
             let left = leftChildIndex(of: parent)
             let right = rightChildIndex(of: parent)
-            var candidate = parent
+            guard left < count else { break }
 
-            if left < count, isCloserHNSWCandidate(storage[left], than: storage[candidate]) {
-                candidate = left
+            var child = left
+            var childValue = storage[left]
+            if right < count {
+                let rightValue = storage[right]
+                if isCloserHNSWCandidate(rightValue, than: childValue) {
+                    child = right
+                    childValue = rightValue
+                }
             }
-            if right < count, isCloserHNSWCandidate(storage[right], than: storage[candidate]) {
-                candidate = right
-            }
-            guard candidate != parent else { return }
 
-            storage.swapAt(parent, candidate)
-            parent = candidate
+            guard isCloserHNSWCandidate(childValue, than: value) else { break }
+            storage[parent] = childValue
+            parent = child
         }
+        storage[parent] = value
     }
 
     @inline(__always)

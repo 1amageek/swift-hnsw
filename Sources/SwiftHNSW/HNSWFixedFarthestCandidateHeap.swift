@@ -16,8 +16,23 @@ struct HNSWFixedFarthestCandidateHeap {
     }
 
     @inline(__always)
+    var topDistanceUnchecked: Float {
+        storage[0].distance
+    }
+
+    @inline(__always)
+    var topUnchecked: HNSWNeighborCandidate {
+        storage[0]
+    }
+
+    @inline(__always)
     mutating func push(_ element: HNSWNeighborCandidate) {
         precondition(count < storage.count, "Nearest candidate capacity is exhausted")
+        pushUnchecked(element)
+    }
+
+    @inline(__always)
+    mutating func pushUnchecked(_ element: HNSWNeighborCandidate) {
         storage[count] = element
         count += 1
         siftUp(from: count - 1)
@@ -29,6 +44,12 @@ struct HNSWFixedFarthestCandidateHeap {
             push(element)
             return
         }
+        storage[0] = element
+        siftDown(from: 0)
+    }
+
+    @inline(__always)
+    mutating func replaceTopUnchecked(with element: HNSWNeighborCandidate) {
         storage[0] = element
         siftDown(from: 0)
     }
@@ -52,9 +73,9 @@ struct HNSWFixedFarthestCandidateHeap {
         for index in 0..<count {
             let element = storage[index]
             if topK.count < boundedLimit {
-                topK.push(element)
-            } else if let farthest = topK.peek, isCloserHNSWCandidate(element, than: farthest) {
-                topK.replaceTop(with: element)
+                topK.pushUnchecked(element)
+            } else if isCloserHNSWCandidate(element, than: topK.topUnchecked) {
+                topK.replaceTopUnchecked(with: element)
             }
         }
         return topK.sortedElements()
@@ -83,9 +104,9 @@ struct HNSWFixedFarthestCandidateHeap {
         for index in 0..<count {
             let element = storage[index]
             if topK.count < boundedLimit {
-                topK.push(element)
-            } else if let farthest = topK.peek, isCloserHNSWCandidate(element, than: farthest) {
-                topK.replaceTop(with: element)
+                topK.pushUnchecked(element)
+            } else if isCloserHNSWCandidate(element, than: topK.topUnchecked) {
+                topK.replaceTopUnchecked(with: element)
             }
         }
         topK.sortStoredElements()
@@ -144,33 +165,41 @@ struct HNSWFixedFarthestCandidateHeap {
     @inline(__always)
     private mutating func siftUp(from index: Int) {
         var child = index
-        var parent = parentIndex(of: child)
-        while child > 0, isFartherHNSWCandidate(storage[child], than: storage[parent]) {
-            storage.swapAt(child, parent)
+        let value = storage[child]
+        while child > 0 {
+            let parent = parentIndex(of: child)
+            let parentValue = storage[parent]
+            guard isFartherHNSWCandidate(value, than: parentValue) else { break }
+            storage[child] = parentValue
             child = parent
-            parent = parentIndex(of: child)
         }
+        storage[child] = value
     }
 
     @inline(__always)
     private mutating func siftDown(from index: Int) {
         var parent = index
+        let value = storage[parent]
         while true {
             let left = leftChildIndex(of: parent)
             let right = rightChildIndex(of: parent)
-            var candidate = parent
+            guard left < count else { break }
 
-            if left < count, isFartherHNSWCandidate(storage[left], than: storage[candidate]) {
-                candidate = left
+            var child = left
+            var childValue = storage[left]
+            if right < count {
+                let rightValue = storage[right]
+                if isFartherHNSWCandidate(rightValue, than: childValue) {
+                    child = right
+                    childValue = rightValue
+                }
             }
-            if right < count, isFartherHNSWCandidate(storage[right], than: storage[candidate]) {
-                candidate = right
-            }
-            guard candidate != parent else { return }
 
-            storage.swapAt(parent, candidate)
-            parent = candidate
+            guard isFartherHNSWCandidate(childValue, than: value) else { break }
+            storage[parent] = childValue
+            parent = child
         }
+        storage[parent] = value
     }
 
     @inline(__always)
