@@ -1,18 +1,28 @@
 struct HNSWConnectionStore: Sendable {
-    private var nodeLevelStarts: [Int]
     private var nodeLevelCounts: [Int]
-    private var levelOffsets: [Int]
-    private var levelNeighborCounts: [Int]
-    private var neighbors: [Int]
+    private var upperLevelStarts: [Int]
+    private var upperLevelCounts: [Int]
+    private var upperLevelOffsets: [Int]
+    private var upperNeighborCounts: [Int]
+    private var upperNeighbors: [HNSWInternalID]
+    private var level0NeighborCounts: [Int]
+    private var level0Neighbors: [HNSWInternalID]
     private let m: Int
+    private let level0Capacity: Int
+    private let upperLevelCapacity: Int
 
     init(m: Int) {
-        self.nodeLevelStarts = []
         self.nodeLevelCounts = []
-        self.levelOffsets = []
-        self.levelNeighborCounts = []
-        self.neighbors = []
+        self.upperLevelStarts = []
+        self.upperLevelCounts = []
+        self.upperLevelOffsets = []
+        self.upperNeighborCounts = []
+        self.upperNeighbors = []
+        self.level0NeighborCounts = []
+        self.level0Neighbors = []
         self.m = m
+        self.level0Capacity = max(1, m * 2 + 1)
+        self.upperLevelCapacity = max(1, m + 1)
     }
 
     var nodeCount: Int {
@@ -24,58 +34,96 @@ struct HNSWConnectionStore: Sendable {
     }
 
     mutating func reserveCapacity(_ nodeCount: Int) {
-        nodeLevelStarts.reserveCapacity(nodeCount)
         nodeLevelCounts.reserveCapacity(nodeCount)
+        upperLevelStarts.reserveCapacity(nodeCount)
+        upperLevelCounts.reserveCapacity(nodeCount)
+        level0NeighborCounts.reserveCapacity(nodeCount)
+        if nodeCount <= Int.max / level0Capacity {
+            level0Neighbors.reserveCapacity(nodeCount * level0Capacity)
+        }
     }
 
-    func levelCount(for internalID: Int) -> Int {
-        guard isValidNode(internalID) else { return 0 }
-        return nodeLevelCounts[internalID]
+    func levelCount(for internalID: HNSWInternalID) -> Int {
+        let nodeIndex = Int(internalID)
+        guard isValidNode(nodeIndex) else { return 0 }
+        return nodeLevelCounts[nodeIndex]
     }
 
-    func hasAnyConnection(for internalID: Int) -> Bool {
-        guard isValidNode(internalID) else { return false }
-        let start = nodeLevelStarts[internalID]
-        let levelCount = nodeLevelCounts[internalID]
-        guard levelCount > 0 else { return false }
-        for slot in start..<(start + levelCount) where levelNeighborCounts[slot] > 0 {
+    func hasAnyConnection(for internalID: HNSWInternalID) -> Bool {
+        let nodeIndex = Int(internalID)
+        guard isValidNode(nodeIndex) else { return false }
+        if level0NeighborCounts[nodeIndex] > 0 {
+            return true
+        }
+        let start = upperLevelStarts[nodeIndex]
+        let upperCount = upperLevelCounts[nodeIndex]
+        guard upperCount > 0 else { return false }
+        for slot in start..<(start + upperCount) where upperNeighborCounts[slot] > 0 {
             return true
         }
         return false
     }
 
-    func neighborCount(for internalID: Int, at level: Int) -> Int {
-        guard let slot = slot(for: internalID, at: level) else { return 0 }
-        return levelNeighborCounts[slot]
+    func neighborCount(for internalID: HNSWInternalID, at level: Int) -> Int {
+        let nodeIndex = Int(internalID)
+        guard isValidNode(nodeIndex), level >= 0, level < nodeLevelCounts[nodeIndex] else { return 0 }
+        if level == 0 {
+            return level0NeighborCounts[nodeIndex]
+        }
+        guard let slot = upperSlot(forNodeIndex: nodeIndex, at: level) else { return 0 }
+        return upperNeighborCounts[slot]
     }
 
     @inline(__always)
-    func neighborStorageRange(for internalID: Int, at level: Int) -> Range<Int> {
-        guard let slot = slot(for: internalID, at: level) else { return 0..<0 }
-        let offset = levelOffsets[slot]
-        return offset..<(offset + levelNeighborCounts[slot])
+    func neighborStorageRange(for internalID: HNSWInternalID, at level: Int) -> Range<Int> {
+        let nodeIndex = Int(internalID)
+        guard isValidNode(nodeIndex), level >= 0, level < nodeLevelCounts[nodeIndex] else { return 0..<0 }
+        if level == 0 {
+            let offset = nodeIndex * level0Capacity
+            return offset..<(offset + level0NeighborCounts[nodeIndex])
+        }
+        guard let slot = upperSlot(forNodeIndex: nodeIndex, at: level) else { return 0..<0 }
+        let offset = upperLevelOffsets[slot]
+        return offset..<(offset + upperNeighborCounts[slot])
     }
 
     @inline(__always)
-    func neighborInStorage(at storageIndex: Int) -> Int {
-        neighbors[storageIndex]
+    func neighborInStorage(at storageIndex: Int, level: Int) -> HNSWInternalID {
+        if level == 0 {
+            return level0Neighbors[storageIndex]
+        }
+        return upperNeighbors[storageIndex]
     }
 
-    func neighbor(at neighborIndex: Int, for internalID: Int, at level: Int) -> Int? {
-        guard let slot = slot(for: internalID, at: level),
-              neighborIndex >= 0,
-              neighborIndex < levelNeighborCounts[slot] else {
+    func neighbor(at neighborIndex: Int, for internalID: HNSWInternalID, at level: Int) -> HNSWInternalID? {
+        let nodeIndex = Int(internalID)
+        guard isValidNode(nodeIndex),
+              level >= 0,
+              level < nodeLevelCounts[nodeIndex],
+              neighborIndex >= 0 else {
             return nil
         }
-        return neighbors[levelOffsets[slot] + neighborIndex]
+        if level == 0 {
+            guard neighborIndex < level0NeighborCounts[nodeIndex] else { return nil }
+            return level0Neighbors[nodeIndex * level0Capacity + neighborIndex]
+        }
+        guard let slot = upperSlot(forNodeIndex: nodeIndex, at: level),
+              neighborIndex < upperNeighborCounts[slot] else {
+            return nil
+        }
+        return upperNeighbors[upperLevelOffsets[slot] + neighborIndex]
     }
 
-    func contains(_ neighborID: Int, for internalID: Int, at level: Int) -> Bool {
-        guard let slot = slot(for: internalID, at: level) else { return false }
-        let offset = levelOffsets[slot]
-        let count = levelNeighborCounts[slot]
-        guard count > 0 else { return false }
-        for index in offset..<(offset + count) where neighbors[index] == neighborID {
+    func contains(_ neighborID: HNSWInternalID, for internalID: HNSWInternalID, at level: Int) -> Bool {
+        let range = neighborStorageRange(for: internalID, at: level)
+        guard !range.isEmpty else { return false }
+        if level == 0 {
+            for index in range where level0Neighbors[index] == neighborID {
+                return true
+            }
+            return false
+        }
+        for index in range where upperNeighbors[index] == neighborID {
             return true
         }
         return false
@@ -85,65 +133,92 @@ struct HNSWConnectionStore: Sendable {
         appendNode(levelCount: max(0, level) + 1)
     }
 
-    mutating func resetNode(_ internalID: Int, level: Int) {
+    mutating func resetNode(_ internalID: HNSWInternalID, level: Int) {
+        let nodeIndex = Int(internalID)
         ensureNode(internalID, through: level)
         let newLevelCount = max(0, level) + 1
-        let oldLevelCount = nodeLevelCounts[internalID]
+        let oldLevelCount = nodeLevelCounts[nodeIndex]
+        nodeLevelCounts[nodeIndex] = newLevelCount
+        level0NeighborCounts[nodeIndex] = 0
         if newLevelCount <= oldLevelCount {
-            nodeLevelCounts[internalID] = newLevelCount
-            let start = nodeLevelStarts[internalID]
-            for slot in start..<(start + oldLevelCount) {
-                levelNeighborCounts[slot] = 0
+            let start = upperLevelStarts[nodeIndex]
+            let oldUpperCount = upperLevelCounts[nodeIndex]
+            let newUpperCount = max(0, newLevelCount - 1)
+            upperLevelCounts[nodeIndex] = newUpperCount
+            for slot in start..<(start + oldUpperCount) {
+                upperNeighborCounts[slot] = 0
             }
             return
         }
-
-        let start = levelOffsets.count
-        nodeLevelStarts[internalID] = start
-        nodeLevelCounts[internalID] = newLevelCount
-        appendLevelSlots(levels: 0..<newLevelCount)
+        rebuildNodeUpperSlots(nodeIndex: nodeIndex, levelCount: newLevelCount, preserving: [])
     }
 
-    mutating func ensureNode(_ internalID: Int, through level: Int) {
-        while nodeLevelCounts.count <= internalID {
+    mutating func ensureNode(_ internalID: HNSWInternalID, through level: Int) {
+        let nodeIndex = Int(internalID)
+        while nodeLevelCounts.count <= nodeIndex {
             appendNode(levelCount: 0)
         }
-        ensureLevel(internalID: internalID, level: level)
+        ensureLevel(nodeIndex: nodeIndex, level: level)
     }
 
-    mutating func append(_ neighborID: Int, for internalID: Int, at level: Int) {
+    mutating func append(_ neighborID: HNSWInternalID, for internalID: HNSWInternalID, at level: Int) {
         ensureNode(internalID, through: level)
-        guard let slot = slot(for: internalID, at: level) else { return }
-        let count = levelNeighborCounts[slot]
-        let offset = levelOffsets[slot]
-        let capacity = capacityForLevel(level)
-        guard count < capacity else { return }
-        neighbors[offset + count] = neighborID
-        levelNeighborCounts[slot] = count + 1
+        let nodeIndex = Int(internalID)
+        if level == 0 {
+            let count = level0NeighborCounts[nodeIndex]
+            guard count < level0Capacity else { return }
+            level0Neighbors[nodeIndex * level0Capacity + count] = neighborID
+            level0NeighborCounts[nodeIndex] = count + 1
+            return
+        }
+        guard let slot = upperSlot(forNodeIndex: nodeIndex, at: level) else { return }
+        let count = upperNeighborCounts[slot]
+        guard count < upperLevelCapacity else { return }
+        upperNeighbors[upperLevelOffsets[slot] + count] = neighborID
+        upperNeighborCounts[slot] = count + 1
     }
 
-    mutating func replaceNeighbors(_ newNeighbors: [Int], for internalID: Int, at level: Int) {
+    mutating func replaceNeighbors(
+        _ newNeighbors: [HNSWInternalID],
+        for internalID: HNSWInternalID,
+        at level: Int
+    ) {
         ensureNode(internalID, through: level)
-        guard let slot = slot(for: internalID, at: level) else { return }
-        let capacity = capacityForLevel(level)
-        let count = min(newNeighbors.count, capacity)
-        let offset = levelOffsets[slot]
-        levelNeighborCounts[slot] = count
+        let nodeIndex = Int(internalID)
+        if level == 0 {
+            let count = min(newNeighbors.count, level0Capacity)
+            let offset = nodeIndex * level0Capacity
+            level0NeighborCounts[nodeIndex] = count
+            for index in 0..<count {
+                level0Neighbors[offset + index] = newNeighbors[index]
+            }
+            return
+        }
+        guard let slot = upperSlot(forNodeIndex: nodeIndex, at: level) else { return }
+        let count = min(newNeighbors.count, upperLevelCapacity)
+        let offset = upperLevelOffsets[slot]
+        upperNeighborCounts[slot] = count
         for index in 0..<count {
-            neighbors[offset + index] = newNeighbors[index]
+            upperNeighbors[offset + index] = newNeighbors[index]
         }
     }
 
     mutating func replaceNeighbors(
         from candidates: [HNSWNeighborCandidate],
-        excluding excludedID: Int?,
-        for internalID: Int,
+        excluding excludedID: HNSWInternalID?,
+        for internalID: HNSWInternalID,
         at level: Int
     ) {
         ensureNode(internalID, through: level)
-        guard let slot = slot(for: internalID, at: level) else { return }
+        let nodeIndex = Int(internalID)
         let capacity = capacityForLevel(level)
-        let offset = levelOffsets[slot]
+        let offset: Int
+        if level == 0 {
+            offset = nodeIndex * level0Capacity
+        } else {
+            guard let slot = upperSlot(forNodeIndex: nodeIndex, at: level) else { return }
+            offset = upperLevelOffsets[slot]
+        }
         var count = 0
         for candidate in candidates {
             let neighborID = candidate.internalID
@@ -153,99 +228,125 @@ struct HNSWConnectionStore: Sendable {
             guard count < capacity else {
                 break
             }
-            neighbors[offset + count] = neighborID
+            if level == 0 {
+                level0Neighbors[offset + count] = neighborID
+            } else {
+                upperNeighbors[offset + count] = neighborID
+            }
             count += 1
         }
-        levelNeighborCounts[slot] = count
+        if level == 0 {
+            level0NeighborCounts[nodeIndex] = count
+        } else if let slot = upperSlot(forNodeIndex: nodeIndex, at: level) {
+            upperNeighborCounts[slot] = count
+        }
     }
 
-    func levels(for internalID: Int) -> [[Int]] {
-        guard isValidNode(internalID) else { return [] }
-        let start = nodeLevelStarts[internalID]
-        let levelCount = nodeLevelCounts[internalID]
-        var result: [[Int]] = []
+    func levels(for internalID: HNSWInternalID) -> [[HNSWInternalID]] {
+        let nodeIndex = Int(internalID)
+        guard isValidNode(nodeIndex) else { return [] }
+        let levelCount = nodeLevelCounts[nodeIndex]
+        var result: [[HNSWInternalID]] = []
         result.reserveCapacity(levelCount)
-        for level in 0..<levelCount {
-            let slot = start + level
-            let offset = levelOffsets[slot]
-            let count = levelNeighborCounts[slot]
-            result.append(Array(neighbors[offset..<(offset + count)]))
+        if levelCount > 0 {
+            let offset = nodeIndex * level0Capacity
+            let count = level0NeighborCounts[nodeIndex]
+            result.append(Array(level0Neighbors[offset..<(offset + count)]))
+        }
+        guard levelCount > 1 else { return result }
+        let start = upperLevelStarts[nodeIndex]
+        for upperLevel in 0..<upperLevelCounts[nodeIndex] {
+            let slot = start + upperLevel
+            let offset = upperLevelOffsets[slot]
+            let count = upperNeighborCounts[slot]
+            result.append(Array(upperNeighbors[offset..<(offset + count)]))
         }
         return result
     }
 
     mutating func replaceAll(with nestedConnections: [[[Int]]]) {
-        nodeLevelStarts.removeAll(keepingCapacity: true)
         nodeLevelCounts.removeAll(keepingCapacity: true)
-        levelOffsets.removeAll(keepingCapacity: true)
-        levelNeighborCounts.removeAll(keepingCapacity: true)
-        neighbors.removeAll(keepingCapacity: true)
+        upperLevelStarts.removeAll(keepingCapacity: true)
+        upperLevelCounts.removeAll(keepingCapacity: true)
+        upperLevelOffsets.removeAll(keepingCapacity: true)
+        upperNeighborCounts.removeAll(keepingCapacity: true)
+        upperNeighbors.removeAll(keepingCapacity: true)
+        level0NeighborCounts.removeAll(keepingCapacity: true)
+        level0Neighbors.removeAll(keepingCapacity: true)
         reserveCapacity(nestedConnections.count)
 
         for levels in nestedConnections {
-            let start = levelOffsets.count
-            nodeLevelStarts.append(start)
-            nodeLevelCounts.append(levels.count)
+            appendNode(levelCount: levels.count)
+            let internalID = HNSWInternalID(nodeLevelCounts.count - 1)
             for (level, levelNeighbors) in levels.enumerated() {
-                let offset = neighbors.count
-                let capacity = capacityForLevel(level)
-                levelOffsets.append(offset)
-                levelNeighborCounts.append(min(levelNeighbors.count, capacity))
-                neighbors.append(contentsOf: levelNeighbors.prefix(capacity))
-                if levelNeighbors.count < capacity {
-                    neighbors.append(contentsOf: repeatElement(0, count: capacity - levelNeighbors.count))
-                }
+                replaceNeighbors(
+                    levelNeighbors.prefix(capacityForLevel(level)).map(HNSWInternalID.init),
+                    for: internalID,
+                    at: level
+                )
             }
         }
     }
 
     private mutating func appendNode(levelCount: Int) {
-        let start = levelOffsets.count
-        nodeLevelStarts.append(start)
         nodeLevelCounts.append(levelCount)
-        appendLevelSlots(levels: 0..<levelCount)
+        level0NeighborCounts.append(0)
+        level0Neighbors.append(contentsOf: repeatElement(0, count: level0Capacity))
+        let upperCount = max(0, levelCount - 1)
+        upperLevelStarts.append(upperLevelOffsets.count)
+        upperLevelCounts.append(upperCount)
+        appendUpperLevelSlots(count: upperCount)
     }
 
-    private mutating func ensureLevel(internalID: Int, level: Int) {
+    private mutating func ensureLevel(nodeIndex: Int, level: Int) {
         guard level >= 0 else { return }
-        let currentCount = nodeLevelCounts[internalID]
+        let currentCount = nodeLevelCounts[nodeIndex]
         guard currentCount <= level else { return }
-        let existingLevels = levels(for: internalID)
-        let newLevelCount = level + 1
-        let start = levelOffsets.count
-        nodeLevelStarts[internalID] = start
-        nodeLevelCounts[internalID] = newLevelCount
-        appendLevelSlots(levels: 0..<newLevelCount)
-        for (existingLevel, existingNeighbors) in existingLevels.enumerated() {
-            replaceNeighbors(existingNeighbors, for: internalID, at: existingLevel)
+        let existingLevels = levels(for: HNSWInternalID(nodeIndex))
+        rebuildNodeUpperSlots(nodeIndex: nodeIndex, levelCount: level + 1, preserving: existingLevels)
+    }
+
+    private mutating func rebuildNodeUpperSlots(
+        nodeIndex: Int,
+        levelCount: Int,
+        preserving existingLevels: [[HNSWInternalID]]
+    ) {
+        nodeLevelCounts[nodeIndex] = levelCount
+        let upperCount = max(0, levelCount - 1)
+        upperLevelStarts[nodeIndex] = upperLevelOffsets.count
+        upperLevelCounts[nodeIndex] = upperCount
+        appendUpperLevelSlots(count: upperCount)
+        let internalID = HNSWInternalID(nodeIndex)
+        for (level, neighbors) in existingLevels.enumerated() where level < levelCount {
+            replaceNeighbors(neighbors, for: internalID, at: level)
         }
     }
 
-    private mutating func appendLevelSlots(levels: Range<Int>) {
-        for level in levels {
-            let offset = neighbors.count
-            let capacity = capacityForLevel(level)
-            levelOffsets.append(offset)
-            levelNeighborCounts.append(0)
-            neighbors.append(contentsOf: repeatElement(0, count: capacity))
+    private mutating func appendUpperLevelSlots(count: Int) {
+        guard count > 0 else { return }
+        for _ in 0..<count {
+            let offset = upperNeighbors.count
+            upperLevelOffsets.append(offset)
+            upperNeighborCounts.append(0)
+            upperNeighbors.append(contentsOf: repeatElement(0, count: upperLevelCapacity))
         }
     }
 
-    private func slot(for internalID: Int, at level: Int) -> Int? {
-        guard isValidNode(internalID), level >= 0, level < nodeLevelCounts[internalID] else {
+    private func upperSlot(forNodeIndex nodeIndex: Int, at level: Int) -> Int? {
+        guard isValidNode(nodeIndex), level > 0, level < nodeLevelCounts[nodeIndex] else {
             return nil
         }
-        return nodeLevelStarts[internalID] + level
+        return upperLevelStarts[nodeIndex] + level - 1
     }
 
-    private func isValidNode(_ internalID: Int) -> Bool {
-        internalID >= 0 && internalID < nodeLevelCounts.count
+    private func isValidNode(_ nodeIndex: Int) -> Bool {
+        nodeIndex >= 0 && nodeIndex < nodeLevelCounts.count
     }
 
     private func capacityForLevel(_ level: Int) -> Int {
         if level == 0 {
-            return max(1, m * 2 + 1)
+            return level0Capacity
         }
-        return max(1, m + 1)
+        return upperLevelCapacity
     }
 }

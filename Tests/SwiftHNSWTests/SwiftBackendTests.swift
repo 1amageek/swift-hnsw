@@ -6,6 +6,17 @@ import Testing
 @Suite("Swift HNSW Backend", .serialized)
 struct SwiftBackendHNSWTests {
 
+    @Test("Rejects capacities outside the internal id range")
+    func rejectsCapacitiesOutsideInternalIDRange() throws {
+        #expect(throws: HNSWError.self) {
+            _ = try HNSWIndex<Float>(
+                dimensions: 1,
+                maxElements: Int(UInt32.max) + 1,
+                metric: .l2
+            )
+        }
+    }
+
     @Test("Exact L2 ordering and deterministic tie break")
     func exactL2OrderingAndTieBreak() throws {
         let index = try HNSWIndex<Float>(dimensions: 1, maxElements: 4, metric: .l2)
@@ -153,8 +164,16 @@ struct SwiftBackendHNSWTests {
         try index.add([1, 0], label: 1)
         try index.add([0, 1], label: 2)
 
+        let storageCounts = index.swiftBackendStorageCounts
+        #expect(storageCounts.float == 0)
+        #expect(storageCounts.half == 4)
+
         let data = try index.serialize()
         let loaded = try HNSWIndex<Float16>.load(from: data, dimensions: 2, metric: .cosine)
+        let loadedStorageCounts = loaded.swiftBackendStorageCounts
+
+        #expect(loadedStorageCounts.float == 0)
+        #expect(loadedStorageCounts.half == 4)
 
         #expect(try loaded.search([2, 0], k: 2).map(\.label) == [1, 2])
     }

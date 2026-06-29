@@ -8,7 +8,7 @@ The default backend is implemented in Swift and supports WebAssembly builds. An 
 - **Swift Backend by Default**: Builds without a C++ toolchain and works with Swift WebAssembly SDKs
 - **Optional C++ Backend**: Enable `CxxBackend` to use hnswlib on supported native platforms
 - **Fast Vector Search**: Nearest-neighbor queries through a stable Swift API
-- **Contiguous Runtime Storage**: Pure Swift stores comparison vectors in `Float` memory and graph edges in a fixed-slot connection store
+- **Contiguous Runtime Storage**: Pure Swift stores Float32 and Float16 vectors in type-specific contiguous arenas and graph edges in a fixed-slot connection store
 - **Float16 Support**: Native half-precision for 50% memory reduction
 - **TurboQuant**: 4-bit vector quantization with HD³ rotation for 6-8x memory compression
 - **Multiple Distance Metrics**: L2 (Euclidean), Inner Product, and Cosine similarity
@@ -127,10 +127,10 @@ typealias HNSWIndexF16 = HNSWIndex<Float16>  // Half precision
 | **Memory** | 4 bytes/element | 2 bytes/element |
 | **Precision** | ~7 digits | ~3 digits |
 | **Recall** | Baseline | ~Same (within 1%) |
-| **Speed** | Faster | Slightly slower* |
+| **Speed** | Faster for Float32-heavy workloads | Competitive when memory bandwidth matters* |
 | **Use Case** | General purpose | Large indexes, memory-constrained |
 
-\* Float16 requires conversion to Float32 for computation. The memory bandwidth savings often offset this on large datasets.
+\* Float16 is stored as half precision and accumulated in Float precision during SIMD distance kernels.
 
 ### When to Use Float16
 
@@ -290,12 +290,12 @@ index.isEmpty    // Boolean check
 
 | Backend | Selection | Search behavior | Synchronization |
 |---------|-----------|-----------------|-----------------|
-| Swift backend | Default | Exact nearest-neighbor search, O(n × d) | Serialized state access with `Mutex` |
+| Swift backend | Default | Approximate HNSW graph search | Serialized state access with `Mutex` |
 | C++ backend | `CxxBackend` trait | Approximate HNSW search, O(log n) average | Serialized access through the bridge lock |
 
-The two backends expose the same Swift API and typed errors. The Swift backend is the portable correctness baseline for WebAssembly and environments without a C++ toolchain. The C++ backend is the native high-performance path.
+The two backends expose the same Swift API and typed errors. The Swift backend is the portable WebAssembly-capable HNSW implementation. The C++ backend remains an optional native accelerator for workloads where measured performance justifies the extra toolchain dependency.
 
-## C++ HNSW Algorithm
+## HNSW Algorithm
 
 HNSW (Hierarchical Navigable Small World) is a graph-based approximate nearest neighbor search algorithm. It builds a multi-layer graph structure where:
 
@@ -317,7 +317,7 @@ HNSW (Hierarchical Navigable Small World) is a graph-based approximate nearest n
 - **Search time**: O(log(n)) average
 - **Memory**: O(n * M) for connections + O(n * d * sizeof(Scalar)) for vectors
 
-These characteristics apply to the optional C++ backend. The default Swift backend performs exact search with O(n × d) query cost.
+The Swift backend follows the same graph model with Swift-native storage: level 0 uses direct fixed-width neighbor slots keyed by internal ID, upper levels use compact fixed slots, and internal graph IDs are stored as `UInt32`.
 
 ## C++ SIMD Optimization
 

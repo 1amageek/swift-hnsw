@@ -1,5 +1,7 @@
+typealias HNSWInternalID = UInt32
+
 struct HNSWNeighborCandidate: Sendable {
-    let internalID: Int
+    let internalID: HNSWInternalID
     let distance: Float
 }
 
