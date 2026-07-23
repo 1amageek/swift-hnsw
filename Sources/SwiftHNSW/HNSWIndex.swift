@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Synchronization
 
 /// Swift-native HNSW graph index.
@@ -924,7 +928,9 @@ extension HNSWIndex {
         loadedConnections.reserveCapacity(labelCount)
 
         var generator = HNSWLevelGenerator(seed: HNSWConfiguration.balanced.randomSeed)
-        let multiplier = 1.0 / Foundation.log(Double(max(2, HNSWConfiguration.balanced.m)))
+        let multiplier = 1.0 / hnswNaturalLog(
+            Double(max(2, HNSWConfiguration.balanced.m))
+        )
         for internalID in 0..<labelCount {
             let label = try reader.readUInt64()
             let deleted = try reader.readBool()

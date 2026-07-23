@@ -1,5 +1,3 @@
-import Foundation
-
 /// Scalar quantizer using Lloyd-Max centroids for the standard normal distribution.
 ///
 /// After random rotation, each coordinate of a unit-sphere vector approximately follows

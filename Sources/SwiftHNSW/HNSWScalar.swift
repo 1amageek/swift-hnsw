@@ -1,5 +1,3 @@
-import Foundation
-
 /// Protocol for scalar types supported by HNSW index
 public protocol HNSWScalar: BinaryFloatingPoint, Sendable {
     var hnswFloatValue: Float { get }

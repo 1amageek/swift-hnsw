@@ -1,5 +1,3 @@
-import Foundation
-
 /// Efficient packing and unpacking of b-bit quantization indices into bytes.
 ///
 /// Packing formats:

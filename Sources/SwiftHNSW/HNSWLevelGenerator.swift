@@ -1,4 +1,8 @@
+#if os(WASI)
+import WASILibc
+#else
 import Foundation
+#endif
 
 struct HNSWLevelGenerator: Sendable {
     private var state: UInt64
@@ -18,7 +22,7 @@ struct HNSWLevelGenerator: Sendable {
 
     mutating func randomLevel(multiplier: Double) -> Int {
         let unit = max(nextUnitInterval(), Double.leastNonzeroMagnitude)
-        return Int(-Foundation.log(unit) * multiplier)
+        return Int(-hnswNaturalLog(unit) * multiplier)
     }
 
     private mutating func nextUnitInterval() -> Double {
@@ -26,4 +30,13 @@ struct HNSWLevelGenerator: Sendable {
         let value = state >> 11
         return Double(value) / Double(UInt64(1) << 53)
     }
+}
+
+@inline(__always)
+func hnswNaturalLog(_ value: Double) -> Double {
+    #if os(WASI)
+    WASILibc.log(value)
+    #else
+    Foundation.log(value)
+    #endif
 }

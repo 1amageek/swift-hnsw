@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import Synchronization
 
 /// Swift backend TurboQuant facade backed by an exact normalized flat index.

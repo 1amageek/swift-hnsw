@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// Errors that can occur when using HNSW index
 public enum HNSWError: Error, Sendable {
