@@ -183,7 +183,7 @@ struct TurboQuantIndexTests {
             dimensions: dim, maxElements: n, bitWidth: 4,
             configuration: HNSWConfiguration(m: 16, efConstruction: 200), seed: 42)
         for (i, v) in trainVectors.enumerated() { try index.add(v, label: UInt64(i)) }
-        index.setEfSearch(200)
+        try index.setEfSearch(200)
 
         var totalRecall: Double = 0
         for qi in 0..<numQueries {
@@ -212,7 +212,7 @@ struct TurboQuantIndexTests {
             dimensions: dim, maxElements: n, bitWidth: 4,
             configuration: HNSWConfiguration(m: 16, efConstruction: 200), seed: 42)
         for (i, v) in trainVectors.enumerated() { try index.add(v, label: UInt64(i)) }
-        index.setEfSearch(200)
+        try index.setEfSearch(200)
 
         var totalRecall: Double = 0
         for qi in 0..<numQueries {
@@ -307,7 +307,7 @@ struct TurboQuantIndexTests {
         for i in 0..<n {
             try index.add((0..<dim).map { _ in Float.random(in: -1...1) }, label: UInt64(i))
         }
-        index.setEfSearch(efSearch)
+        try index.setEfSearch(efSearch)
 
         let query = (0..<dim).map { _ in Float.random(in: -1...1) }
         let resultsBefore = try index.search(query, k: k)
@@ -319,7 +319,7 @@ struct TurboQuantIndexTests {
         let loaded = try TurboQuantIndex.load(from: tmpPath)
         // Explicitly set the same efSearch on loaded index
         // (this test verifies that the header preserves it OR that the user must set it)
-        loaded.setEfSearch(efSearch)
+        try loaded.setEfSearch(efSearch)
 
         let resultsAfter = try loaded.search(query, k: k)
         #expect(resultsBefore.map { $0.label } == resultsAfter.map { $0.label },
@@ -423,7 +423,7 @@ struct TurboQuantIndexTests {
         let vectors = (0..<n).map { _ in (0..<dim).map { _ in Float.random(in: -1...1) } }
         for (i, v) in vectors.enumerated() { try index.add(v, label: UInt64(i)) }
 
-        index.setEfSearch(200)
+        try index.setEfSearch(200)
         let query = vectors[0] // search for first vector
         let results = try index.search(query, k: k)
         // With Float32 construction, the first result should be the vector itself (label 0)

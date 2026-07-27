@@ -74,7 +74,7 @@ struct IndexRepresentationBenchmarks {
         for (i, v) in vectors.enumerated() { try idx.add(v, label: UInt64(i)) }
         let buildTime = CFAbsoluteTimeGetCurrent() - t0
 
-        idx.setEfSearch(efSearch)
+        try idx.setEfSearch(efSearch)
         _ = try idx.search(queries[0], k: k)
         let t1 = CFAbsoluteTimeGetCurrent()
         var results: [[SearchResult]] = []
@@ -101,7 +101,7 @@ struct IndexRepresentationBenchmarks {
         for (i, v) in vf16.enumerated() { try idx.add(v, label: UInt64(i)) }
         let buildTime = CFAbsoluteTimeGetCurrent() - t0
 
-        idx.setEfSearch(efSearch)
+        try idx.setEfSearch(efSearch)
         _ = try idx.search(qf16[0], k: k)
         let t1 = CFAbsoluteTimeGetCurrent()
         var results: [[SearchResult]] = []
@@ -125,7 +125,7 @@ struct IndexRepresentationBenchmarks {
         for (i, v) in vectors.enumerated() { try idx.add(v, label: UInt64(i)) }
         let buildTime = CFAbsoluteTimeGetCurrent() - t0
 
-        idx.setEfSearch(efSearch)
+        try idx.setEfSearch(efSearch)
         _ = try idx.search(queries[0], k: k)
         let t1 = CFAbsoluteTimeGetCurrent()
         var results: [[SearchResult]] = []

@@ -198,6 +198,110 @@ struct HNSWIndexContractTests {
         #expect(missing == nil)
     }
 
+    @Test("Borrowed vector callback supports reentrant mutation", .timeLimit(.minutes(1)))
+    func borrowedVectorCallbackSupportsReentrantMutation() throws {
+        let floatIndex = try HNSWIndex<Float>(dimensions: 3, maxElements: 2, metric: .l2)
+        try floatIndex.add([1, 2, 3], label: 10)
+
+        let borrowedFloat = try floatIndex.withVector(label: 10) { vector in
+            #expect(floatIndex.contains(label: 10))
+            try floatIndex.add([4, 5, 6], label: 10)
+            return Array(vector)
+        }
+
+        #expect(borrowedFloat == [1, 2, 3])
+        #expect(floatIndex.getVector(label: 10) == [4, 5, 6])
+
+        let halfIndex = try HNSWIndex<Float16>(dimensions: 3, maxElements: 2, metric: .l2)
+        try halfIndex.add([1, 2, 3], label: 20)
+
+        let borrowedHalf = try halfIndex.withVector(label: 20) { vector in
+            #expect(halfIndex.contains(label: 20))
+            try halfIndex.add([4, 5, 6], label: 20)
+            return Array(vector)
+        }
+
+        #expect(borrowedHalf == [1, 2, 3])
+        #expect(halfIndex.getVector(label: 20) == [4, 5, 6])
+    }
+
+    @Test("Invalid efSearch throws a typed error")
+    func invalidEfSearchThrowsTypedError() throws {
+        let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 2, metric: .l2)
+
+        #expect(throws: HNSWError.invalidArgument("efSearch must be positive")) {
+            try index.setEfSearch(0)
+        }
+        #expect(throws: HNSWError.invalidArgument("efSearch must be positive")) {
+            try index.setEfSearch(-1)
+        }
+        try index.setEfSearch(1)
+    }
+
+    @Test("Invalid construction and search arguments throw typed errors")
+    func invalidConstructionAndSearchArgumentsThrowTypedErrors() throws {
+        #expect(throws: HNSWError.invalidArgument("m must be at least 2 and small enough to calculate connection capacity")) {
+            _ = try HNSWIndex<Float>(
+                dimensions: 2,
+                maxElements: 2,
+                configuration: HNSWConfiguration(m: 1)
+            )
+        }
+        #expect(throws: HNSWError.invalidArgument("efConstruction must be at least m")) {
+            _ = try HNSWIndex<Float>(
+                dimensions: 2,
+                maxElements: 2,
+                configuration: HNSWConfiguration(m: 16, efConstruction: 15)
+            )
+        }
+        #expect(throws: HNSWError.invalidArgument("efSearch must be positive")) {
+            _ = try HNSWIndex<Float>(
+                dimensions: 2,
+                maxElements: 2,
+                configuration: HNSWConfiguration(efSearch: 0)
+            )
+        }
+
+        let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 2)
+        #expect(throws: HNSWError.invalidArgument("k must be positive")) {
+            _ = try index.search([0, 0], k: 0)
+        }
+        #expect(throws: HNSWError.invalidArgument("k must be positive")) {
+            _ = try index.searchBatch([[0, 0]], k: 0)
+        }
+        #expect(throws: HNSWError.invalidArgument("numQueries must not be negative")) {
+            _ = try index.searchBatch([], numQueries: -1, k: 1)
+        }
+    }
+
+    @Test("Concurrent reads and writes preserve index state", .timeLimit(.minutes(1)))
+    func concurrentReadsAndWritesPreserveIndexState() async throws {
+        let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 50, metric: .l2)
+        for label in 0..<10 {
+            try index.add([Float(label), 0], label: UInt64(label))
+        }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<4 {
+                group.addTask {
+                    for _ in 0..<50 {
+                        _ = try index.search([0, 0], k: 5)
+                    }
+                }
+            }
+            group.addTask {
+                for label in 10..<50 {
+                    try index.add([Float(label), 0], label: UInt64(label))
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        #expect(index.count == 50)
+        #expect(index.allLabels == (0..<50).map(UInt64.init))
+        #expect(try index.search([49, 0], k: 1).first?.label == 49)
+    }
+
     @Test("Search into caller buffer preserves ordering and count semantics")
     func searchIntoCallerBufferPreservesOrderingAndCountSemantics() throws {
         let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 4, metric: .l2)
@@ -263,6 +367,42 @@ struct HNSWIndexContractTests {
 
 @Suite("TurboQuant index contract", .serialized)
 struct TurboQuantIndexContractTests {
+
+    @Test("Invalid efSearch throws a typed error")
+    func invalidEfSearchThrowsTypedError() throws {
+        let index = try TurboQuantIndex(dimensions: 2, maxElements: 2, bitWidth: 4)
+
+        #expect(throws: HNSWError.invalidArgument("efSearch must be positive")) {
+            try index.setEfSearch(0)
+        }
+        #expect(throws: HNSWError.invalidArgument("efSearch must be positive")) {
+            try index.setEfSearch(-1)
+        }
+        try index.setEfSearch(1)
+    }
+
+    @Test("Invalid construction and search arguments throw typed errors")
+    func invalidConstructionAndSearchArgumentsThrowTypedErrors() throws {
+        #expect(throws: HNSWError.invalidArgument("efConstruction must be at least m")) {
+            _ = try TurboQuantIndex(
+                dimensions: 2,
+                maxElements: 2,
+                configuration: HNSWConfiguration(m: 16, efConstruction: 15)
+            )
+        }
+        #expect(throws: HNSWError.invalidArgument("efSearch must be positive")) {
+            _ = try TurboQuantIndex(
+                dimensions: 2,
+                maxElements: 2,
+                configuration: HNSWConfiguration(efSearch: 0)
+            )
+        }
+
+        let index = try TurboQuantIndex(dimensions: 2, maxElements: 2)
+        #expect(throws: HNSWError.invalidArgument("k must be positive")) {
+            _ = try index.search([0, 0], k: 0)
+        }
+    }
 
     @Test("Exact cosine ordering and deterministic tie break")
     func exactCosineOrderingAndTieBreak() throws {

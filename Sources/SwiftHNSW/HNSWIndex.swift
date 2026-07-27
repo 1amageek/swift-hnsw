@@ -57,6 +57,15 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
         guard maxElements <= Int(UInt32.max) else {
             throw HNSWError.initializationFailed("Maximum element count exceeds UInt32 internal id capacity")
         }
+        guard configuration.m >= 2, configuration.m <= (Int.max - 1) / 2 else {
+            throw HNSWError.invalidArgument("m must be at least 2 and small enough to calculate connection capacity")
+        }
+        guard configuration.efConstruction >= configuration.m else {
+            throw HNSWError.invalidArgument("efConstruction must be at least m")
+        }
+        guard configuration.efSearch > 0 else {
+            throw HNSWError.invalidArgument("efSearch must be positive")
+        }
         self.dimensions = dimensions
         self.metric = metric
         self.configuration = configuration
@@ -106,9 +115,12 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
 
     public var isEmpty: Bool { count == 0 }
 
-    public func setEfSearch(_ ef: Int) {
+    public func setEfSearch(_ ef: Int) throws {
+        guard ef > 0 else {
+            throw HNSWError.invalidArgument("efSearch must be positive")
+        }
         state.withLock {
-            $0.efSearch = max(1, ef)
+            $0.efSearch = ef
         }
     }
 
@@ -149,9 +161,13 @@ extension HNSWIndex {
     }
 
     /// Search with a borrowed query vector without materializing an intermediate array.
+    ///
+    /// `k` must be positive.
     public func search(_ query: UnsafeBufferPointer<Scalar>, k: Int) throws -> [SearchResult] {
         try validateDimensions(query.count)
-        guard k > 0 else { return [] }
+        guard k > 0 else {
+            throw HNSWError.invalidArgument("k must be positive")
+        }
 
         return state.withLock { state in
             if Scalar.self == Float.self, !metric.requiresNormalization {
@@ -196,7 +212,8 @@ extension HNSWIndex {
 
     /// Search into a caller-provided output buffer.
     ///
-    /// Returns the number of results written. `results` must have room for at least `k` values.
+    /// Returns the number of results written. `k` must be positive and `results` must have
+    /// room for at least `k` values.
     @discardableResult
     public func search(
         _ query: UnsafeBufferPointer<Scalar>,
@@ -204,7 +221,9 @@ extension HNSWIndex {
         into results: UnsafeMutableBufferPointer<SearchResult>
     ) throws -> Int {
         try validateDimensions(query.count)
-        guard k > 0 else { return 0 }
+        guard k > 0 else {
+            throw HNSWError.invalidArgument("k must be positive")
+        }
         guard results.count >= k else {
             throw HNSWError.invalidArgument("Result buffer must contain at least k elements")
         }
@@ -347,15 +366,21 @@ extension HNSWIndex {
         }
     }
 
-    /// Search borrowed contiguous query vectors.
+    /// Search borrowed contiguous query vectors. `numQueries` must not be negative and
+    /// `k` must be positive.
     public func searchBatch(
         _ queries: UnsafeBufferPointer<Scalar>,
         numQueries: Int,
         k: Int
     ) throws -> [[SearchResult]] {
+        guard numQueries >= 0 else {
+            throw HNSWError.invalidArgument("numQueries must not be negative")
+        }
+        guard k > 0 else {
+            throw HNSWError.invalidArgument("k must be positive")
+        }
         try validateDimensions(queries.count, expectedTotal: numQueries * dimensions)
         guard numQueries > 0 else { return [] }
-        guard k > 0 else { return Array(repeating: [], count: numQueries) }
 
         return state.withLock { state in
             var results: [[SearchResult]] = []
@@ -406,6 +431,9 @@ extension HNSWIndex {
     }
 
     public func searchBatch(_ queries: [[Scalar]], k: Int) throws -> [[SearchResult]] {
+        guard k > 0 else {
+            throw HNSWError.invalidArgument("k must be positive")
+        }
         guard !queries.isEmpty else { return [] }
         guard queries.allSatisfy({ $0.count == dimensions }) else {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: queries.first?.count ?? 0)
@@ -495,39 +523,66 @@ extension HNSWIndex {
     /// Float and Float16 indexes expose the internal contiguous arena without creating an
     /// intermediate array. Other scalar conformances fall back to materialization because
     /// comparison values are stored as Float.
+    ///
+    /// Safety invariants:
+    /// - The local Array snapshot retains the initialized storage for the entire callback.
+    /// - Entry offsets are created from complete `dimensions`-sized vectors and remain in bounds.
+    /// - Runtime type checks guarantee that raw storage is rebound only to its exact scalar type.
+    /// - The buffer is valid only for the synchronous callback and must not escape it.
+    /// - All index mutations use the mutex and Array copy-on-write preserves an active snapshot.
     public func withVector<R: Sendable>(
         label: UInt64,
         _ body: @Sendable (UnsafeBufferPointer<Scalar>) throws -> R
     ) rethrows -> R? {
-        try state.withLock { state in
+        if Scalar.self == Float.self {
+            let borrowedStorage: (storage: [Float], start: Int)? = state.withLock { state in
+                guard let entry = state.entries[label], !entry.deleted else {
+                    return nil
+                }
+                // Array's copy-on-write storage acts as the retained borrow owner. Writers
+                // preserve this snapshot by copying before mutation while the body executes.
+                return (state.comparisonStorage, entry.offset)
+            }
+            guard let borrowedStorage else {
+                return nil
+            }
+            return try borrowedStorage.storage.withUnsafeBufferPointer { storage in
+                let pointer = UnsafeRawPointer(storage.baseAddress! + borrowedStorage.start)
+                    .assumingMemoryBound(to: Scalar.self)
+                return try body(UnsafeBufferPointer(start: pointer, count: dimensions))
+            }
+        }
+
+        if Scalar.self == Float16.self {
+            let borrowedStorage: (storage: [Float16], start: Int)? = state.withLock { state in
+                guard let entry = state.entries[label], !entry.deleted else {
+                    return nil
+                }
+                // Array's copy-on-write storage acts as the retained borrow owner. Writers
+                // preserve this snapshot by copying before mutation while the body executes.
+                return (state.halfComparisonStorage, entry.offset)
+            }
+            guard let borrowedStorage else {
+                return nil
+            }
+            return try borrowedStorage.storage.withUnsafeBufferPointer { storage in
+                let pointer = UnsafeRawPointer(storage.baseAddress! + borrowedStorage.start)
+                    .assumingMemoryBound(to: Scalar.self)
+                return try body(UnsafeBufferPointer(start: pointer, count: dimensions))
+            }
+        }
+
+        let output: [Scalar]? = state.withLock { state in
             guard let entry = state.entries[label], !entry.deleted else {
                 return nil
             }
             let start = entry.offset
-
-            if Scalar.self == Float.self {
-                return try state.comparisonStorage.withUnsafeBufferPointer { storage in
-                    let pointer = UnsafeRawPointer(storage.baseAddress! + start)
-                        .assumingMemoryBound(to: Scalar.self)
-                    return try body(UnsafeBufferPointer(start: pointer, count: dimensions))
-                }
-            }
-
-            if Scalar.self == Float16.self {
-                return try state.halfComparisonStorage.withUnsafeBufferPointer { storage in
-                    let pointer = UnsafeRawPointer(storage.baseAddress! + start)
-                        .assumingMemoryBound(to: Scalar.self)
-                    return try body(UnsafeBufferPointer(start: pointer, count: dimensions))
-                }
-            }
-
-            var output: [Scalar] = []
-            output.reserveCapacity(dimensions)
-            for value in state.comparisonStorage[start..<(start + dimensions)] {
-                output.append(Scalar(value))
-            }
-            return try output.withUnsafeBufferPointer(body)
+            return state.comparisonStorage[start..<(start + dimensions)].map(Scalar.init)
         }
+        guard let output else {
+            return nil
+        }
+        return try output.withUnsafeBufferPointer(body)
     }
 
     public var allLabels: [UInt64] {
@@ -1642,17 +1697,17 @@ extension HNSWIndex {
     }
 
     private var levelMultiplier: Double {
-        1.0 / hnswNaturalLog(Double(max(2, configuration.m)))
+        1.0 / hnswNaturalLog(Double(configuration.m))
     }
 
     @inline(__always)
     private func maxConnections(at level: Int) -> Int {
-        level == 0 ? max(1, configuration.m * 2) : max(1, configuration.m)
+        level == 0 ? configuration.m * 2 : configuration.m
     }
 
     @inline(__always)
     private func newElementConnections(at level: Int) -> Int {
-        max(1, configuration.m)
+        configuration.m
     }
 
     private func connectNewElement(_ internalID: HNSWInternalID, state: inout State) {
@@ -1737,7 +1792,7 @@ extension HNSWIndex {
         if topLevel >= 0 {
             var visitedTag = state.visitedTag
             for level in stride(from: topLevel, through: 0, by: -1) {
-                let efConstruction = max(configuration.efConstruction, configuration.m)
+                let efConstruction = configuration.efConstruction
                 let nodeCount = state.labelOrder.count
                 let candidateCapacity = max(1, nodeCount)
                 let nearestCapacity = max(1, min(efConstruction, nodeCount))
@@ -1973,7 +2028,7 @@ extension HNSWIndex {
             )
         }
 
-        let effectiveEF = max(1, ef)
+        let effectiveEF = ef
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
         var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
@@ -2045,7 +2100,7 @@ extension HNSWIndex {
         nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type
     ) -> [HNSWNeighborCandidate] {
-        let effectiveEF = max(1, ef)
+        let effectiveEF = ef
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
         var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
@@ -2200,7 +2255,7 @@ extension HNSWIndex {
             )
         }
 
-        let effectiveEF = max(1, ef)
+        let effectiveEF = ef
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
         var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
@@ -2273,7 +2328,7 @@ extension HNSWIndex {
         distanceComputer: Distance.Type,
         resultLimit: Int
     ) -> [HNSWNeighborCandidate] {
-        let effectiveEF = max(1, ef)
+        let effectiveEF = ef
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
         var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
@@ -2343,7 +2398,7 @@ extension HNSWIndex {
         resultLimit: Int,
         into results: UnsafeMutableBufferPointer<SearchResult>
     ) -> Int {
-        let effectiveEF = max(1, ef)
+        let effectiveEF = ef
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
         var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
@@ -2418,7 +2473,7 @@ extension HNSWIndex {
         distanceComputer: Distance.Type,
         resultLimit: Int
     ) -> [HNSWNeighborCandidate] {
-        let effectiveEF = max(1, ef)
+        let effectiveEF = ef
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
         var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)

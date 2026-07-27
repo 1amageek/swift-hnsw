@@ -179,7 +179,7 @@ struct ANNBenchmarks {
         print(String(repeating: "-", count: 85))
 
         for efSearch in efSearchValues {
-            index.setEfSearch(efSearch)
+            try index.setEfSearch(efSearch)
 
             // Warmup
             _ = try index.search(testQueries[0], k: k)
@@ -279,7 +279,7 @@ struct ANNBenchmarks {
             }
             let buildTime = CFAbsoluteTimeGetCurrent() - buildStart
 
-            index.setEfSearch(100)
+            try index.setEfSearch(100)
 
             // Warmup
             _ = try index.search(testQueries[0], k: k)
@@ -336,7 +336,7 @@ struct ANNBenchmarks {
             }
             let buildTime = CFAbsoluteTimeGetCurrent() - buildStart
 
-            index.setEfSearch(100)
+            try index.setEfSearch(100)
 
             // Warmup
             _ = try index.search(testQueries[0], k: k)
@@ -404,7 +404,7 @@ struct ANNBenchmarks {
             }
             let buildTime = CFAbsoluteTimeGetCurrent() - buildStart
 
-            index.setEfSearch(100)
+            try index.setEfSearch(100)
 
             // Warmup
             _ = try index.search(testQueries[0], k: k)
@@ -458,7 +458,7 @@ struct ANNBenchmarks {
         }
         let singleAddTime = CFAbsoluteTimeGetCurrent() - singleAddStart
 
-        singleIndex.setEfSearch(100)
+        try singleIndex.setEfSearch(100)
         let singleSearchStart = CFAbsoluteTimeGetCurrent()
         for query in testQueries {
             _ = try singleIndex.search(query, k: k)
@@ -478,7 +478,7 @@ struct ANNBenchmarks {
         try batchIndex.addBatch(trainVectors)
         let batchAddTime = CFAbsoluteTimeGetCurrent() - batchAddStart
 
-        batchIndex.setEfSearch(100)
+        try batchIndex.setEfSearch(100)
         let batchSearchStart = CFAbsoluteTimeGetCurrent()
         _ = try batchIndex.searchBatch(testQueries, k: k)
         let batchSearchTime = CFAbsoluteTimeGetCurrent() - batchSearchStart
@@ -542,7 +542,7 @@ struct ANNBenchmarks {
         }
         let buildTimeF32 = CFAbsoluteTimeGetCurrent() - buildStartF32
 
-        indexF32.setEfSearch(100)
+        try indexF32.setEfSearch(100)
         _ = try indexF32.search(testQueriesF32[0], k: k)  // Warmup
 
         let searchStartF32 = CFAbsoluteTimeGetCurrent()
@@ -566,7 +566,7 @@ struct ANNBenchmarks {
         }
         let buildTimeF16 = CFAbsoluteTimeGetCurrent() - buildStartF16
 
-        indexF16.setEfSearch(100)
+        try indexF16.setEfSearch(100)
         _ = try indexF16.search(testQueriesF16[0], k: k)  // Warmup
 
         let searchStartF16 = CFAbsoluteTimeGetCurrent()
@@ -660,7 +660,7 @@ struct ANNBenchmarks {
             }
             let buildTime = CFAbsoluteTimeGetCurrent() - buildStart
 
-            index.setEfSearch(100)
+            try index.setEfSearch(100)
 
             // Warmup
             _ = try index.search(testQueries[0], k: k)
@@ -731,7 +731,7 @@ struct ANNBenchmarks {
         let f32Mem = formatSize(n * d * 4)
 
         for ef in efSearchValues {
-            f32Index.setEfSearch(ef)
+            try f32Index.setEfSearch(ef)
             _ = try f32Index.search(testQueries[0], k: k)
             let t = CFAbsoluteTimeGetCurrent()
             var results: [[SearchResult]] = []
@@ -755,7 +755,7 @@ struct ANNBenchmarks {
             let tqMem = formatSize(n * tqIndex.bytesPerVector)
 
             for ef in efSearchValues {
-                tqIndex.setEfSearch(ef)
+                try tqIndex.setEfSearch(ef)
                 _ = try tqIndex.search(testQueries[0], k: k)
                 let t = CFAbsoluteTimeGetCurrent()
                 var results: [[SearchResult]] = []
@@ -799,7 +799,7 @@ struct ANNBenchmarks {
         for (i, vector) in trainVectors.enumerated() {
             try index.add(vector, label: UInt64(i))
         }
-        index.setEfSearch(100)
+        try index.setEfSearch(100)
 
         print("\n" + String(repeating: "-", count: 70))
         print("| \(pad("Threads", 10)) | \(pad("Total QPS", 12)) | \(pad("QPS/Thread", 12)) | \(pad("Speedup", 10)) |")

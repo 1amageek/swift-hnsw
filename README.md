@@ -110,6 +110,8 @@ let query: [Float16] = [0.5, 0.3, 0.1, ...]
 let results = try index.search(query, k: 10)
 ```
 
+Search requires a positive `k`; invalid values throw `HNSWError.invalidArgument`.
+
 ### Type Aliases
 
 For convenience, type aliases are provided:
@@ -229,7 +231,7 @@ let allResults = try index.searchBatch(queries, k: 10)
 
 **Tuning search accuracy:**
 ```swift
-index.setEfSearch(100)  // Higher = better recall, slower search
+try index.setEfSearch(100)  // Must be positive; higher = better recall, slower search
 ```
 
 **Searching into caller-owned storage:**
@@ -260,7 +262,8 @@ if let vector: [Float16] = indexF16.getVector(label: 0) {
 ```
 
 For performance-sensitive reads, borrow the stored vector instead of materializing
-an intermediate array:
+an intermediate array. The callback runs outside the index mutex while a retained
+copy-on-write storage owner keeps the borrowed buffer valid for the callback's duration:
 
 ```swift
 let magnitude = index.withVector(label: 0) { vector in

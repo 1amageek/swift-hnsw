@@ -243,7 +243,7 @@ struct HNSWReferenceComparison {
         iterations: Int
     ) throws -> [SearchMeasurement] {
         try benchmark.efSearchValues.map { efSearch in
-            index.setEfSearch(efSearch)
+            try index.setEfSearch(efSearch)
             var lastResults: [[SearchResult]] = []
             var durations: [Double] = []
             durations.reserveCapacity(iterations)
@@ -273,7 +273,7 @@ struct HNSWReferenceComparison {
         iterations: Int
     ) throws -> [SearchMeasurement] {
         try benchmark.efSearchValues.map { efSearch in
-            index.setEfSearch(efSearch)
+            try index.setEfSearch(efSearch)
             var lastResults: [[SearchResult]] = []
             var durations: [Double] = []
             durations.reserveCapacity(iterations)

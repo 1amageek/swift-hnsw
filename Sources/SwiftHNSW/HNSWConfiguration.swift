@@ -1,14 +1,14 @@
 /// Configuration for HNSW index
 public struct HNSWConfiguration: Sendable, Hashable {
-    /// Maximum number of connections per element (default: 16)
+    /// Maximum number of connections per element (default: 16, minimum: 2)
     /// Higher values improve recall but increase memory and build time
     public var m: Int
 
-    /// Size of the dynamic candidate list during construction (default: 200)
+    /// Size of the dynamic candidate list during construction (default: 200, minimum: `m`)
     /// Higher values improve index quality but increase build time
     public var efConstruction: Int
 
-    /// Size of the dynamic candidate list during search (default: 10)
+    /// Size of the dynamic candidate list during search (default: 10, must be positive)
     /// Higher values improve recall but increase search time
     public var efSearch: Int
 

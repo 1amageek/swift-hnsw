@@ -281,7 +281,7 @@ struct BaselineBenchmarks {
 
         for ef in efSearchValues {
             // Float32
-            indexF32.setEfSearch(ef)
+            try indexF32.setEfSearch(ef)
             _ = try indexF32.search(testQueries[0], k: Self.k) // warmup
 
             let startF32 = CFAbsoluteTimeGetCurrent()
@@ -301,7 +301,7 @@ struct BaselineBenchmarks {
             ))
 
             // Float16
-            indexF16.setEfSearch(ef)
+            try indexF16.setEfSearch(ef)
             _ = try indexF16.search(testF16[0], k: Self.k) // warmup
 
             let startF16 = CFAbsoluteTimeGetCurrent()
@@ -384,7 +384,7 @@ struct BaselineBenchmarks {
         }
         let buildTime = CFAbsoluteTimeGetCurrent() - buildStart
 
-        index.setEfSearch(efSearch)
+        try index.setEfSearch(efSearch)
         _ = try index.search(testQueries[0], k: Self.k) // warmup
 
         let searchStart = CFAbsoluteTimeGetCurrent()
@@ -433,7 +433,7 @@ struct BaselineBenchmarks {
         }
         let buildTime = CFAbsoluteTimeGetCurrent() - buildStart
 
-        index.setEfSearch(efSearch)
+        try index.setEfSearch(efSearch)
         _ = try index.search(testF16[0], k: Self.k) // warmup
 
         let searchStart = CFAbsoluteTimeGetCurrent()

@@ -47,6 +47,15 @@ public final class TurboQuantIndex: Sendable {
         guard (1...4).contains(bitWidth) else {
             throw HNSWError.initializationFailed("bitWidth must be 1, 2, 3, or 4")
         }
+        guard configuration.m >= 2, configuration.m <= (Int.max - 1) / 2 else {
+            throw HNSWError.invalidArgument("m must be at least 2 and small enough to calculate connection capacity")
+        }
+        guard configuration.efConstruction >= configuration.m else {
+            throw HNSWError.invalidArgument("efConstruction must be at least m")
+        }
+        guard configuration.efSearch > 0 else {
+            throw HNSWError.invalidArgument("efSearch must be positive")
+        }
 
         self.dimensions = dimensions
         self.bitWidth = bitWidth
@@ -83,9 +92,12 @@ public final class TurboQuantIndex: Sendable {
     public var bytesPerVector: Int { _packedSize }
     public var compressionRatio: Float { Float(dimensions * 4) / Float(_packedSize) }
 
-    public func setEfSearch(_ ef: Int) {
+    public func setEfSearch(_ ef: Int) throws {
+        guard ef > 0 else {
+            throw HNSWError.invalidArgument("efSearch must be positive")
+        }
         state.withLock {
-            $0.efSearch = max(1, ef)
+            $0.efSearch = ef
         }
     }
 
@@ -135,12 +147,14 @@ public final class TurboQuantIndex: Sendable {
         }
     }
 
-    /// Search with a borrowed query vector.
+    /// Search with a borrowed query vector. `k` must be positive.
     public func search(_ query: UnsafeBufferPointer<Float>, k: Int) throws -> [SearchResult] {
         guard query.count == dimensions else {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: query.count)
         }
-        guard k > 0 else { return [] }
+        guard k > 0 else {
+            throw HNSWError.invalidArgument("k must be positive")
+        }
 
         state.withLock {
             $0.finalized = true

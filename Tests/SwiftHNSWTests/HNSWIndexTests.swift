@@ -98,7 +98,7 @@ struct HNSWIndexTests {
             configuration: HNSWConfiguration(efSearch: 10)
         )
 
-        index.setEfSearch(50)
+        try index.setEfSearch(50)
         // Just verify it doesn't crash
         #expect(Bool(true))
     }

@@ -12,6 +12,7 @@ struct HNSWConnectionStore: Sendable {
     private let upperLevelCapacity: Int
 
     init(m: Int) {
+        precondition(m > 0 && m <= (Int.max - 1) / 2)
         self.nodeLevelCounts = []
         self.upperLevelStarts = []
         self.upperLevelCounts = []
@@ -21,8 +22,8 @@ struct HNSWConnectionStore: Sendable {
         self.level0NeighborCounts = []
         self.level0Neighbors = []
         self.m = m
-        self.level0Capacity = max(1, m * 2 + 1)
-        self.upperLevelCapacity = max(1, m + 1)
+        self.level0Capacity = m * 2 + 1
+        self.upperLevelCapacity = m + 1
     }
 
     var nodeCount: Int {
