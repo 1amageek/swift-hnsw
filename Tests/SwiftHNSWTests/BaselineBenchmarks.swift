@@ -70,7 +70,7 @@ private func platformInfo() -> String {
     return "\(machine), Darwin \(release)"
 }
 
-// MARK: - Benchmark Helpers
+// MARK: - Benchmark Inputs and Metrics
 
 private func generateRandomVectors(count: Int, dimension: Int) -> [[Float]] {
     (0..<count).map { _ in
@@ -231,7 +231,7 @@ struct BaselineBenchmarks {
         report.addTable(title: "Float32 vs Float16 Comparison", headers: compHeaders, rows: compRows)
 
         // Write report
-        let reportPath = findProjectRoot() + "/reports/baseline_benchmark.md"
+        let reportPath = try locatePackageRoot() + "/reports/baseline_benchmark.md"
         try report.write(to: reportPath)
         print("\nReport written to: \(reportPath)")
     }
@@ -330,7 +330,7 @@ struct BaselineBenchmarks {
         }
 
         // Append to report
-        let reportPath = findProjectRoot() + "/reports/baseline_benchmark.md"
+        let reportPath = try locatePackageRoot() + "/reports/baseline_benchmark.md"
         let headers = ["efSearch", "Type", "Recall@10", "QPS", "Latency (ms)"]
         let rows: [[String]] = sweepResults.map { r in
             [
@@ -363,7 +363,7 @@ struct BaselineBenchmarks {
         #expect(bestRecall > 0.9, "Best recall should exceed 90%")
     }
 
-    // MARK: - Private Helpers
+    // MARK: - Search Measurements
 
     private func benchmarkFloat32(
         trainVectors: [[Float]],
@@ -463,16 +463,19 @@ struct BaselineBenchmarks {
 
 // MARK: - Project Root Detection
 
-func findProjectRoot() -> String {
+private enum BenchmarkReportLocationError: Error {
+    case packageManifestNotFound
+}
+
+func locatePackageRoot() throws -> String {
     // Walk up from the test binary location to find Package.swift
     var url = URL(fileURLWithPath: #filePath)
     for _ in 0..<10 {
         url = url.deletingLastPathComponent()
-        let packageSwift = url.appendingPathComponent("Package.swift")
-        if FileManager.default.fileExists(atPath: packageSwift.path) {
+        let packageManifest = url.appendingPathComponent("Package.swift")
+        if FileManager.default.fileExists(atPath: packageManifest.path) {
             return url.path
         }
     }
-    // Default directory
-    return FileManager.default.currentDirectoryPath
+    throw BenchmarkReportLocationError.packageManifestNotFound
 }

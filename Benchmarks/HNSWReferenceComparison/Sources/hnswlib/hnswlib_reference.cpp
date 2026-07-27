@@ -1,8 +1,4 @@
-#if defined(__wasi__) || defined(__wasm__)
-extern "C" void hnswlib_wasm_unavailable_bridge(void) {}
-#else
-
-#include "include/hnswlib_swift_bridge.h"
+#include "include/hnswlib_reference.h"
 #include "include/hnswlib.h"
 #include <string>
 
@@ -744,5 +740,3 @@ bool hnsw_turboquant_finalize(HNSWIndexHandle index, TurboQuantEncoderHandle enc
 }
 
 } // extern "C"
-
-#endif

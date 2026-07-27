@@ -2,8 +2,8 @@ import Testing
 import Foundation
 @testable import SwiftHNSW
 
-@Suite("Benchmarks", .serialized, .enabled(if: ProcessInfo.processInfo.environment["BENCHMARK"] != nil))
-struct Benchmarks {
+@Suite("Index representation benchmarks", .serialized, .enabled(if: ProcessInfo.processInfo.environment["BENCHMARK"] != nil))
+struct IndexRepresentationBenchmarks {
 
     @Test("Float32 / Float16 / TurboQuant comparison")
     func fullComparison() throws {
@@ -62,7 +62,7 @@ struct Benchmarks {
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Index Measurements
 
     private func benchFloat32(
         vectors: [[Float]], queries: [[Float]], gt: [[UInt64]],

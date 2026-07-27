@@ -3,7 +3,7 @@ import SwiftHNSW
 import hnswlib
 
 @main
-struct CxxBackendComparison {
+struct HNSWReferenceComparison {
     fileprivate struct BenchmarkCase {
         let name: String
         let dimensions: Int
@@ -13,10 +13,10 @@ struct CxxBackendComparison {
         let efSearchValues: [Int]
     }
 
-    private struct Measurement {
-        let backend: String
+    private struct IndexMeasurement {
+        let indexIdentifier: String
         let scalar: String
-        let benchmark: BenchmarkCase
+        let benchmarkCase: BenchmarkCase
         let buildSeconds: Double
         let searchMeasurements: [SearchMeasurement]
     }
@@ -31,9 +31,9 @@ struct CxxBackendComparison {
     static func main() throws {
         let iterations = max(
             1,
-            Int(ProcessInfo.processInfo.environment["BACKEND_COMPARISON_ITERATIONS"] ?? "") ?? 3
+            Int(ProcessInfo.processInfo.environment["REFERENCE_COMPARISON_ITERATIONS"] ?? "") ?? 3
         )
-        let cases = [
+        let comparisonCases = [
             BenchmarkCase(
                 name: "float32-l2-10k",
                 dimensions: 128,
@@ -52,11 +52,11 @@ struct CxxBackendComparison {
             ),
         ]
 
-        for benchmark in cases {
-            try runFloat32(benchmark, iterations: iterations)
+        for benchmarkCase in comparisonCases {
+            try compareFloat32Indexes(benchmarkCase, iterations: iterations)
         }
 
-        try runFloat16(
+        try compareFloat16Indexes(
             BenchmarkCase(
                 name: "float16-l2-10k",
                 dimensions: 128,
@@ -69,7 +69,7 @@ struct CxxBackendComparison {
         )
     }
 
-    private static func runFloat32(_ benchmark: BenchmarkCase, iterations: Int) throws {
+    private static func compareFloat32Indexes(_ benchmark: BenchmarkCase, iterations: Int) throws {
         let vectors = deterministicFloatVectors(
             count: benchmark.vectorCount,
             dimensions: benchmark.dimensions,
@@ -88,69 +88,71 @@ struct CxxBackendComparison {
             benchmark: benchmark
         )
 
-        let swiftIndex = try HNSWIndex<Float>(
+        let candidateIndex = try HNSWIndex<Float>(
             dimensions: benchmark.dimensions,
             maxElements: benchmark.vectorCount,
             metric: .l2,
             configuration: HNSWConfiguration(m: 16, efConstruction: 200)
         )
-        let swiftBuildSeconds = try measureSeconds {
+        let candidateBuildSeconds = try measureSeconds {
             try vectors.withUnsafeBufferPointer { vectorBuffer in
                 try labels.withUnsafeBufferPointer { labelBuffer in
-                    _ = try swiftIndex.addBatch(vectorBuffer, labels: labelBuffer)
+                    _ = try candidateIndex.addBatch(vectorBuffer, labels: labelBuffer)
                 }
             }
         }
-        let swiftMeasurement = try measureSwiftFloat32(
-            index: swiftIndex,
+        let candidateMeasurements = try measureCandidateFloat32(
+            index: candidateIndex,
             queries: queries,
             groundTruth: groundTruth,
             benchmark: benchmark,
             iterations: iterations
         )
-        printMeasurement(
-            Measurement(
-                backend: "swift-hnsw",
+        printIndexMeasurement(
+            IndexMeasurement(
+                indexIdentifier: "hnsw-index",
                 scalar: "Float32",
-                benchmark: benchmark,
-                buildSeconds: swiftBuildSeconds,
-                searchMeasurements: swiftMeasurement
+                benchmarkCase: benchmark,
+                buildSeconds: candidateBuildSeconds,
+                searchMeasurements: candidateMeasurements
             )
         )
 
-        let cxxIndex = try CxxFloat32Index(
+        let referenceIndex = try ReferenceFloat32Index(
             dimensions: benchmark.dimensions,
             maxElements: benchmark.vectorCount
         )
-        let cxxBuildSeconds = try measureSeconds {
+        let referenceBuildSeconds = try measureSeconds {
             try vectors.withUnsafeBufferPointer { vectorBuffer in
                 try labels.withUnsafeBufferPointer { labelBuffer in
-                    let added = cxxIndex.addBatch(vectors: vectorBuffer, labels: labelBuffer)
+                    let added = referenceIndex.addBatch(vectors: vectorBuffer, labels: labelBuffer)
                     guard added == benchmark.vectorCount else {
-                        throw BenchmarkError.backendFailure("C++ added \(added) vectors")
+                        throw ReferenceComparisonError.indexOperationFailed(
+                            "Reference index accepted \(added) of \(benchmark.vectorCount) vectors"
+                        )
                     }
                 }
             }
         }
-        let cxxMeasurement = measureCxxFloat32(
-            index: cxxIndex,
+        let referenceMeasurements = measureReferenceFloat32(
+            index: referenceIndex,
             queries: queries,
             groundTruth: groundTruth,
             benchmark: benchmark,
             iterations: iterations
         )
-        printMeasurement(
-            Measurement(
-                backend: "cxx-hnswlib-reference",
+        printIndexMeasurement(
+            IndexMeasurement(
+                indexIdentifier: "hnswlib-reference",
                 scalar: "Float32",
-                benchmark: benchmark,
-                buildSeconds: cxxBuildSeconds,
-                searchMeasurements: cxxMeasurement
+                benchmarkCase: benchmark,
+                buildSeconds: referenceBuildSeconds,
+                searchMeasurements: referenceMeasurements
             )
         )
     }
 
-    private static func runFloat16(_ benchmark: BenchmarkCase, iterations: Int) throws {
+    private static func compareFloat16Indexes(_ benchmark: BenchmarkCase, iterations: Int) throws {
         let vectors = deterministicFloatVectors(
             count: benchmark.vectorCount,
             dimensions: benchmark.dimensions,
@@ -169,69 +171,71 @@ struct CxxBackendComparison {
             benchmark: benchmark
         )
 
-        let swiftIndex = try HNSWIndex<Float16>(
+        let candidateIndex = try HNSWIndex<Float16>(
             dimensions: benchmark.dimensions,
             maxElements: benchmark.vectorCount,
             metric: .l2,
             configuration: HNSWConfiguration(m: 16, efConstruction: 200)
         )
-        let swiftBuildSeconds = try measureSeconds {
+        let candidateBuildSeconds = try measureSeconds {
             try vectors.withUnsafeBufferPointer { vectorBuffer in
                 try labels.withUnsafeBufferPointer { labelBuffer in
-                    _ = try swiftIndex.addBatch(vectorBuffer, labels: labelBuffer)
+                    _ = try candidateIndex.addBatch(vectorBuffer, labels: labelBuffer)
                 }
             }
         }
-        let swiftMeasurement = try measureSwiftFloat16(
-            index: swiftIndex,
+        let candidateMeasurements = try measureCandidateFloat16(
+            index: candidateIndex,
             queries: queries,
             groundTruth: groundTruth,
             benchmark: benchmark,
             iterations: iterations
         )
-        printMeasurement(
-            Measurement(
-                backend: "swift-hnsw",
+        printIndexMeasurement(
+            IndexMeasurement(
+                indexIdentifier: "hnsw-index",
                 scalar: "Float16",
-                benchmark: benchmark,
-                buildSeconds: swiftBuildSeconds,
-                searchMeasurements: swiftMeasurement
+                benchmarkCase: benchmark,
+                buildSeconds: candidateBuildSeconds,
+                searchMeasurements: candidateMeasurements
             )
         )
 
-        let cxxIndex = try CxxFloat16Index(
+        let referenceIndex = try ReferenceFloat16Index(
             dimensions: benchmark.dimensions,
             maxElements: benchmark.vectorCount
         )
-        let cxxBuildSeconds = try measureSeconds {
+        let referenceBuildSeconds = try measureSeconds {
             try vectors.withUnsafeBufferPointer { vectorBuffer in
                 try labels.withUnsafeBufferPointer { labelBuffer in
-                    let added = cxxIndex.addBatch(vectors: vectorBuffer, labels: labelBuffer)
+                    let added = referenceIndex.addBatch(vectors: vectorBuffer, labels: labelBuffer)
                     guard added == benchmark.vectorCount else {
-                        throw BenchmarkError.backendFailure("C++ added \(added) vectors")
+                        throw ReferenceComparisonError.indexOperationFailed(
+                            "Reference index accepted \(added) of \(benchmark.vectorCount) vectors"
+                        )
                     }
                 }
             }
         }
-        let cxxMeasurement = measureCxxFloat16(
-            index: cxxIndex,
+        let referenceMeasurements = measureReferenceFloat16(
+            index: referenceIndex,
             queries: queries,
             groundTruth: groundTruth,
             benchmark: benchmark,
             iterations: iterations
         )
-        printMeasurement(
-            Measurement(
-                backend: "cxx-hnswlib-reference",
+        printIndexMeasurement(
+            IndexMeasurement(
+                indexIdentifier: "hnswlib-reference",
                 scalar: "Float16",
-                benchmark: benchmark,
-                buildSeconds: cxxBuildSeconds,
-                searchMeasurements: cxxMeasurement
+                benchmarkCase: benchmark,
+                buildSeconds: referenceBuildSeconds,
+                searchMeasurements: referenceMeasurements
             )
         )
     }
 
-    private static func measureSwiftFloat32(
+    private static func measureCandidateFloat32(
         index: HNSWIndex<Float>,
         queries: [Float],
         groundTruth: [[UInt64]],
@@ -261,7 +265,7 @@ struct CxxBackendComparison {
         }
     }
 
-    private static func measureSwiftFloat16(
+    private static func measureCandidateFloat16(
         index: HNSWIndex<Float16>,
         queries: [Float16],
         groundTruth: [[UInt64]],
@@ -291,8 +295,8 @@ struct CxxBackendComparison {
         }
     }
 
-    private static func measureCxxFloat32(
-        index: CxxFloat32Index,
+    private static func measureReferenceFloat32(
+        index: ReferenceFloat32Index,
         queries: [Float],
         groundTruth: [[UInt64]],
         benchmark: BenchmarkCase,
@@ -306,7 +310,7 @@ struct CxxBackendComparison {
             for _ in 0..<iterations {
                 let seconds = measureSeconds {
                     lastResults = queries.withUnsafeBufferPointer { queryBuffer in
-                        index.searchBatch(queries: queryBuffer, numQueries: benchmark.queryCount, k: benchmark.k)
+                        index.searchBatch(queries: queryBuffer, queryCount: benchmark.queryCount, k: benchmark.k)
                     }
                 }
                 durations.append(seconds)
@@ -321,8 +325,8 @@ struct CxxBackendComparison {
         }
     }
 
-    private static func measureCxxFloat16(
-        index: CxxFloat16Index,
+    private static func measureReferenceFloat16(
+        index: ReferenceFloat16Index,
         queries: [Float16],
         groundTruth: [[UInt64]],
         benchmark: BenchmarkCase,
@@ -336,7 +340,7 @@ struct CxxBackendComparison {
             for _ in 0..<iterations {
                 let seconds = measureSeconds {
                     lastResults = queries.withUnsafeBufferPointer { queryBuffer in
-                        index.searchBatch(queries: queryBuffer, numQueries: benchmark.queryCount, k: benchmark.k)
+                        index.searchBatch(queries: queryBuffer, queryCount: benchmark.queryCount, k: benchmark.k)
                     }
                 }
                 durations.append(seconds)
@@ -369,79 +373,82 @@ struct CxxBackendComparison {
         )
     }
 
-    private static func printMeasurement(_ measurement: Measurement) {
-        let buildRate = Double(measurement.benchmark.vectorCount) / max(measurement.buildSeconds, .leastNonzeroMagnitude)
+    private static func printIndexMeasurement(_ measurement: IndexMeasurement) {
+        let buildRate = Double(measurement.benchmarkCase.vectorCount) / max(measurement.buildSeconds, .leastNonzeroMagnitude)
         print(
-            "backend_comparison backend=\(measurement.backend) scalar=\(measurement.scalar) " +
-            "case=\(measurement.benchmark.name) n=\(measurement.benchmark.vectorCount) " +
-            "d=\(measurement.benchmark.dimensions) q=\(measurement.benchmark.queryCount) " +
-            "k=\(measurement.benchmark.k) build_seconds=\(format(measurement.buildSeconds)) " +
-            "build_vectors_per_second=\(format(buildRate))"
+            "reference_comparison index=\(measurement.indexIdentifier) scalar=\(measurement.scalar) " +
+            "case=\(measurement.benchmarkCase.name) n=\(measurement.benchmarkCase.vectorCount) " +
+            "d=\(measurement.benchmarkCase.dimensions) q=\(measurement.benchmarkCase.queryCount) " +
+            "k=\(measurement.benchmarkCase.k) build_seconds=\(formatMeasurementValue(measurement.buildSeconds)) " +
+            "build_vectors_per_second=\(formatMeasurementValue(buildRate))"
         )
 
         for search in measurement.searchMeasurements {
-            let medianLatency = search.medianSeconds / Double(measurement.benchmark.queryCount) * 1_000
-            let p95Latency = search.p95Seconds / Double(measurement.benchmark.queryCount) * 1_000
-            let qps = Double(measurement.benchmark.queryCount) / max(search.medianSeconds, .leastNonzeroMagnitude)
+            let medianLatency = search.medianSeconds / Double(measurement.benchmarkCase.queryCount) * 1_000
+            let p95Latency = search.p95Seconds / Double(measurement.benchmarkCase.queryCount) * 1_000
+            let queriesPerSecond = Double(measurement.benchmarkCase.queryCount) /
+                max(search.medianSeconds, .leastNonzeroMagnitude)
             print(
-                "backend_comparison backend=\(measurement.backend) scalar=\(measurement.scalar) " +
-                "case=\(measurement.benchmark.name) ef_search=\(search.efSearch) " +
-                "search_seconds_median=\(format(search.medianSeconds)) " +
-                "search_seconds_p95=\(format(search.p95Seconds)) " +
-                "qps_median=\(format(qps)) latency_ms_median=\(format(medianLatency)) " +
-                "latency_ms_p95=\(format(p95Latency)) recall_at_\(measurement.benchmark.k)=\(format(search.recall))"
+                "reference_comparison index=\(measurement.indexIdentifier) scalar=\(measurement.scalar) " +
+                "case=\(measurement.benchmarkCase.name) ef_search=\(search.efSearch) " +
+                "search_seconds_median=\(formatMeasurementValue(search.medianSeconds)) " +
+                "search_seconds_p95=\(formatMeasurementValue(search.p95Seconds)) " +
+                "qps_median=\(formatMeasurementValue(queriesPerSecond)) " +
+                "latency_ms_median=\(formatMeasurementValue(medianLatency)) " +
+                "latency_ms_p95=\(formatMeasurementValue(p95Latency)) " +
+                "recall_at_\(measurement.benchmarkCase.k)=\(formatMeasurementValue(search.recall))"
             )
         }
     }
 }
 
-private final class CxxFloat32Index {
+private final class ReferenceFloat32Index {
     private let dimensions: Int
-    private let space: HNSWSpaceHandle
-    private let index: HNSWIndexHandle
+    private let distanceSpace: HNSWSpaceHandle
+    private let referenceIndex: HNSWIndexHandle
 
     init(dimensions: Int, maxElements: Int) throws {
         self.dimensions = dimensions
         guard let space = hnsw_create_l2_space(dimensions) else {
-            throw BenchmarkError.backendFailure("Failed to create C++ Float32 L2 space")
+            throw ReferenceComparisonError.indexOperationFailed("Failed to create hnswlib Float32 L2 space")
         }
         guard let index = hnsw_create_index(space, maxElements, 16, 200, 100, false) else {
             hnsw_destroy_space(space)
-            throw BenchmarkError.backendFailure("Failed to create C++ Float32 index")
+            throw ReferenceComparisonError.indexOperationFailed("Failed to create hnswlib Float32 index")
         }
-        self.space = space
-        self.index = index
+        self.distanceSpace = space
+        self.referenceIndex = index
     }
 
     deinit {
-        hnsw_destroy_index(index)
-        hnsw_destroy_space(space)
+        hnsw_destroy_index(referenceIndex)
+        hnsw_destroy_space(distanceSpace)
     }
 
     func setEfSearch(_ efSearch: Int) {
-        hnsw_set_ef(index, efSearch)
+        hnsw_set_ef(referenceIndex, efSearch)
     }
 
     func addBatch(
         vectors: UnsafeBufferPointer<Float>,
         labels: UnsafeBufferPointer<UInt64>
     ) -> Int {
-        Int(hnsw_add_points_batch(index, vectors.baseAddress!, labels.baseAddress!, labels.count, dimensions))
+        Int(hnsw_add_points_batch(referenceIndex, vectors.baseAddress!, labels.baseAddress!, labels.count, dimensions))
     }
 
     func searchBatch(
         queries: UnsafeBufferPointer<Float>,
-        numQueries: Int,
+        queryCount: Int,
         k: Int
     ) -> [[SearchResult]] {
-        var labels = [UInt64](repeating: 0, count: numQueries * k)
-        var distances = [Float](repeating: 0, count: numQueries * k)
+        var labels = [UInt64](repeating: 0, count: queryCount * k)
+        var distances = [Float](repeating: 0, count: queryCount * k)
         _ = labels.withUnsafeMutableBufferPointer { labelBuffer in
             distances.withUnsafeMutableBufferPointer { distanceBuffer in
                 hnsw_search_knn_batch(
-                    index,
+                    referenceIndex,
                     queries.baseAddress!,
-                    numQueries,
+                    queryCount,
                     dimensions,
                     Int32(k),
                     labelBuffer.baseAddress!,
@@ -449,35 +456,35 @@ private final class CxxFloat32Index {
                 )
             }
         }
-        return buildBatchResults(labels: labels, distances: distances, numQueries: numQueries, k: k)
+        return buildBatchResults(labels: labels, distances: distances, queryCount: queryCount, k: k)
     }
 }
 
-private final class CxxFloat16Index {
+private final class ReferenceFloat16Index {
     private let dimensions: Int
-    private let space: HNSWSpaceHandle
-    private let index: HNSWIndexHandle
+    private let distanceSpace: HNSWSpaceHandle
+    private let referenceIndex: HNSWIndexHandle
 
     init(dimensions: Int, maxElements: Int) throws {
         self.dimensions = dimensions
         guard let space = hnsw_create_l2_space_f16(dimensions) else {
-            throw BenchmarkError.backendFailure("Failed to create C++ Float16 L2 space")
+            throw ReferenceComparisonError.indexOperationFailed("Failed to create hnswlib Float16 L2 space")
         }
         guard let index = hnsw_create_index(space, maxElements, 16, 200, 100, false) else {
             hnsw_destroy_space(space)
-            throw BenchmarkError.backendFailure("Failed to create C++ Float16 index")
+            throw ReferenceComparisonError.indexOperationFailed("Failed to create hnswlib Float16 index")
         }
-        self.space = space
-        self.index = index
+        self.distanceSpace = space
+        self.referenceIndex = index
     }
 
     deinit {
-        hnsw_destroy_index(index)
-        hnsw_destroy_space(space)
+        hnsw_destroy_index(referenceIndex)
+        hnsw_destroy_space(distanceSpace)
     }
 
     func setEfSearch(_ efSearch: Int) {
-        hnsw_set_ef(index, efSearch)
+        hnsw_set_ef(referenceIndex, efSearch)
     }
 
     func addBatch(
@@ -485,24 +492,24 @@ private final class CxxFloat16Index {
         labels: UnsafeBufferPointer<UInt64>
     ) -> Int {
         vectors.baseAddress!.withMemoryRebound(to: UInt16.self, capacity: vectors.count) { vectorBits in
-            Int(hnsw_add_points_batch_f16(index, vectorBits, labels.baseAddress!, labels.count, dimensions))
+            Int(hnsw_add_points_batch_f16(referenceIndex, vectorBits, labels.baseAddress!, labels.count, dimensions))
         }
     }
 
     func searchBatch(
         queries: UnsafeBufferPointer<Float16>,
-        numQueries: Int,
+        queryCount: Int,
         k: Int
     ) -> [[SearchResult]] {
-        var labels = [UInt64](repeating: 0, count: numQueries * k)
-        var distances = [Float](repeating: 0, count: numQueries * k)
+        var labels = [UInt64](repeating: 0, count: queryCount * k)
+        var distances = [Float](repeating: 0, count: queryCount * k)
         queries.baseAddress!.withMemoryRebound(to: UInt16.self, capacity: queries.count) { queryBits in
             _ = labels.withUnsafeMutableBufferPointer { labelBuffer in
                 distances.withUnsafeMutableBufferPointer { distanceBuffer in
                     hnsw_search_knn_batch_f16(
-                        index,
+                        referenceIndex,
                         queryBits,
-                        numQueries,
+                        queryCount,
                         dimensions,
                         Int32(k),
                         labelBuffer.baseAddress!,
@@ -511,12 +518,12 @@ private final class CxxFloat16Index {
                 }
             }
         }
-        return buildBatchResults(labels: labels, distances: distances, numQueries: numQueries, k: k)
+        return buildBatchResults(labels: labels, distances: distances, queryCount: queryCount, k: k)
     }
 }
 
-private enum BenchmarkError: Error {
-    case backendFailure(String)
+private enum ReferenceComparisonError: Error {
+    case indexOperationFailed(String)
 }
 
 private func deterministicFloatVectors(count: Int, dimensions: Int, seed: UInt64) -> [Float] {
@@ -540,7 +547,7 @@ private func groundTruthFloat32(
     vectors: [Float],
     queries: [Float],
     labels: [UInt64],
-    benchmark: CxxBackendComparison.BenchmarkCase
+    benchmark: HNSWReferenceComparison.BenchmarkCase
 ) -> [[UInt64]] {
     var truth: [[UInt64]] = []
     truth.reserveCapacity(benchmark.queryCount)
@@ -578,7 +585,7 @@ private func groundTruthFloat16(
     vectors: [Float16],
     queries: [Float16],
     labels: [UInt64],
-    benchmark: CxxBackendComparison.BenchmarkCase
+    benchmark: HNSWReferenceComparison.BenchmarkCase
 ) -> [[UInt64]] {
     var truth: [[UInt64]] = []
     truth.reserveCapacity(benchmark.queryCount)
@@ -643,12 +650,12 @@ private func recall(results: [[SearchResult]], groundTruth: [[UInt64]], k: Int) 
 private func buildBatchResults(
     labels: [UInt64],
     distances: [Float],
-    numQueries: Int,
+    queryCount: Int,
     k: Int
 ) -> [[SearchResult]] {
     var output: [[SearchResult]] = []
-    output.reserveCapacity(numQueries)
-    for queryIndex in 0..<numQueries {
+    output.reserveCapacity(queryCount)
+    for queryIndex in 0..<queryCount {
         var queryResults: [SearchResult] = []
         queryResults.reserveCapacity(k)
         for resultIndex in 0..<k {
@@ -672,7 +679,7 @@ private func measureSeconds(_ body: () throws -> Void) rethrows -> Double {
     return Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000
 }
 
-private func format(_ value: Double) -> String {
+private func formatMeasurementValue(_ value: Double) -> String {
     String(format: "%.6f", value)
 }
 

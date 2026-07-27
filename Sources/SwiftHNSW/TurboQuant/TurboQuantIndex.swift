@@ -1,11 +1,11 @@
 #if canImport(FoundationEssentials)
 import FoundationEssentials
-#else
+#elseif canImport(Foundation)
 import Foundation
 #endif
 import Synchronization
 
-/// Swift backend TurboQuant facade backed by an exact normalized flat index.
+/// TurboQuant facade backed by an exact normalized flat index.
 public final class TurboQuantIndex: Sendable {
 
     private struct Entry: Sendable {
@@ -18,7 +18,7 @@ public final class TurboQuantIndex: Sendable {
         var entries: [UInt64: Entry]
         var labelOrder: [UInt64]
         var vectorStorage: [Float]
-        var queryScratch: [Float]
+        var queryWorkspace: [Float]
     }
 
     public let dimensions: Int
@@ -69,7 +69,7 @@ public final class TurboQuantIndex: Sendable {
             entries: [:],
             labelOrder: [],
             vectorStorage: vectorStorage,
-            queryScratch: [Float](repeating: 0, count: dimensions)
+            queryWorkspace: [Float](repeating: 0, count: dimensions)
         ))
     }
 
@@ -147,14 +147,14 @@ public final class TurboQuantIndex: Sendable {
         }
 
         return state.withLock { state in
-            ensureQueryScratch(&state)
-            state.queryScratch.withUnsafeMutableBufferPointer { scratch in
-                VectorOperations.normalize(query, into: scratch)
+            ensureQueryWorkspaceCapacity(&state)
+            state.queryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
+                VectorOperations.normalize(query, into: preparedQuery)
             }
             var results: [SearchResult] = []
             results.reserveCapacity(min(k, state.entries.count))
 
-            state.queryScratch.withUnsafeBufferPointer { normalizedQuery in
+            state.queryWorkspace.withUnsafeBufferPointer { normalizedQuery in
                 state.vectorStorage.withUnsafeBufferPointer { storage in
                     for label in state.labelOrder {
                         guard let entry = state.entries[label] else {
@@ -174,6 +174,7 @@ public final class TurboQuantIndex: Sendable {
         }
     }
 
+    #if canImport(FoundationEssentials) || canImport(Foundation)
     private static let headerMagic: UInt32 = 0x54515746 // "TQWF"
     private static let headerVersion: UInt32 = 1
     private static let headerSize = 40
@@ -238,10 +239,10 @@ public final class TurboQuantIndex: Sendable {
         let version: UInt32 = data.readLittleEndian(at: &offset)
 
         guard magic == headerMagic else {
-            throw HNSWError.loadFailed("Invalid Swift backend TurboQuant file magic")
+            throw HNSWError.loadFailed("Invalid TurboQuant archive magic")
         }
         guard version == headerVersion else {
-            throw HNSWError.loadFailed("Unsupported Swift backend TurboQuant version \(version)")
+            throw HNSWError.loadFailed("Unsupported TurboQuant archive version \(version)")
         }
 
         let dimensions = Int(data.readLittleEndian(at: &offset) as UInt32)
@@ -266,7 +267,7 @@ public final class TurboQuantIndex: Sendable {
         try index.state.withLock {
             for _ in 0..<labelCount {
                 guard offset + 8 + dimensions * 4 <= data.count else {
-                    throw HNSWError.loadFailed("Swift backend TurboQuant data is truncated")
+                    throw HNSWError.loadFailed("TurboQuant archive is truncated")
                 }
 
                 let label: UInt64 = data.readLittleEndian(at: &offset)
@@ -281,23 +282,25 @@ public final class TurboQuantIndex: Sendable {
             }
 
             guard offset == data.count else {
-                throw HNSWError.loadFailed("Swift backend TurboQuant data has trailing bytes")
+                throw HNSWError.loadFailed("TurboQuant archive has trailing bytes")
             }
             $0.finalized = true
         }
 
         return index
     }
+    #endif
 
-    private func ensureQueryScratch(_ state: inout State) {
-        guard state.queryScratch.count != dimensions else { return }
-        state.queryScratch = [Float](repeating: 0, count: dimensions)
+    private func ensureQueryWorkspaceCapacity(_ state: inout State) {
+        guard state.queryWorkspace.count != dimensions else { return }
+        state.queryWorkspace = [Float](repeating: 0, count: dimensions)
     }
 }
 
 
-// MARK: - Data Serialization Helpers
+// MARK: - Archive Encoding
 
+#if canImport(FoundationEssentials) || canImport(Foundation)
 extension Data {
     mutating func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
         var le = value.littleEndian
@@ -313,3 +316,4 @@ extension Data {
         return T(littleEndian: value)
     }
 }
+#endif

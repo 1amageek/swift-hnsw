@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import SwiftHNSW
 
-@Suite("Swift HNSW Backend", .serialized)
-struct SwiftBackendHNSWTests {
+@Suite("HNSW index contract", .serialized)
+struct HNSWIndexContractTests {
 
     @Test("Rejects capacities outside the internal id range")
     func rejectsCapacitiesOutsideInternalIDRange() throws {
@@ -157,22 +157,22 @@ struct SwiftBackendHNSWTests {
         #expect(single.first?.label == 30)
     }
 
-    @Test("Float16 roundtrip uses the same backend semantics")
+    @Test("Float16 roundtrip preserves index semantics")
     func float16Roundtrip() throws {
         let index = try HNSWIndex<Float16>(dimensions: 2, maxElements: 4, metric: .cosine)
         try index.add([1, 0], label: 1)
         try index.add([0, 1], label: 2)
 
-        let storageCounts = index.swiftBackendStorageCounts
-        #expect(storageCounts.float == 0)
-        #expect(storageCounts.half == 4)
+        let storageCounts = index.comparisonValueCounts
+        #expect(storageCounts.singlePrecision == 0)
+        #expect(storageCounts.halfPrecision == 4)
 
         let data = try index.serialize()
         let loaded = try HNSWIndex<Float16>.load(from: data, dimensions: 2, metric: .cosine)
-        let loadedStorageCounts = loaded.swiftBackendStorageCounts
+        let loadedStorageCounts = loaded.comparisonValueCounts
 
-        #expect(loadedStorageCounts.float == 0)
-        #expect(loadedStorageCounts.half == 4)
+        #expect(loadedStorageCounts.singlePrecision == 0)
+        #expect(loadedStorageCounts.halfPrecision == 4)
 
         #expect(try loaded.search([2, 0], k: 2).map(\.label) == [1, 2])
     }
@@ -261,8 +261,8 @@ struct SwiftBackendHNSWTests {
     }
 }
 
-@Suite("Swift TurboQuant Backend", .serialized)
-struct SwiftBackendTurboQuantTests {
+@Suite("TurboQuant index contract", .serialized)
+struct TurboQuantIndexContractTests {
 
     @Test("Exact cosine ordering and deterministic tie break")
     func exactCosineOrderingAndTieBreak() throws {
@@ -294,7 +294,7 @@ struct SwiftBackendTurboQuantTests {
             try index.add([0, 0, 1], label: 3)
         }
 
-        let path = temporaryPath(name: "swift_backend_tq")
+        let path = temporaryPath(name: "turboquant_roundtrip")
         defer { removeFileIfPresent(path) }
         try index.save(to: path)
 
@@ -331,7 +331,7 @@ struct SwiftBackendTurboQuantTests {
 
     @Test("Invalid serialized payload throws typed load error")
     func invalidPayloadThrows() throws {
-        let path = temporaryPath(name: "swift_backend_tq_invalid")
+        let path = temporaryPath(name: "turboquant_invalid_archive")
         defer { removeFileIfPresent(path) }
         try Data([0, 1, 2, 3]).write(to: URL(fileURLWithPath: path))
 
@@ -342,13 +342,13 @@ struct SwiftBackendTurboQuantTests {
 }
 
 @Suite(
-    "Swift Backend Performance",
+    "Index performance",
     .serialized,
-    .enabled(if: ProcessInfo.processInfo.environment["SWIFT_BACKEND_PERF"] != nil)
+    .enabled(if: ProcessInfo.processInfo.environment["HNSW_PERFORMANCE_TESTS"] != nil)
 )
-struct SwiftBackendPerformanceTests {
+struct IndexPerformanceTests {
 
-    @Test("Flat HNSW backend performance smoke")
+    @Test("Flat HNSW index performance smoke")
     func hnswFlatSearchPerformanceSmoke() throws {
         let dimensions = 64
         let count = 2_000
@@ -372,13 +372,13 @@ struct SwiftBackendPerformanceTests {
 
         let vectorsPerSecond = Double(count) / max(buildSeconds, .leastNonzeroMagnitude)
         let queriesPerSecond = Double(queryCount) / max(searchSeconds, .leastNonzeroMagnitude)
-        print("Swift HNSW backend: build=\(vectorsPerSecond) vectors/s search=\(queriesPerSecond) qps")
+        print("HNSW index: build=\(vectorsPerSecond) vectors/s search=\(queriesPerSecond) qps")
 
         #expect(vectorsPerSecond > 10_000)
         #expect(queriesPerSecond > 100)
     }
 
-    @Test("TurboQuant backend performance smoke")
+    @Test("TurboQuant index performance smoke")
     func turboQuantSearchPerformanceSmoke() throws {
         let dimensions = 64
         let count = 2_000
@@ -402,7 +402,7 @@ struct SwiftBackendPerformanceTests {
 
         let vectorsPerSecond = Double(count) / max(buildSeconds, .leastNonzeroMagnitude)
         let queriesPerSecond = Double(queryCount) / max(searchSeconds, .leastNonzeroMagnitude)
-        print("Swift TurboQuant backend: build=\(vectorsPerSecond) vectors/s search=\(queriesPerSecond) qps")
+        print("TurboQuant index: build=\(vectorsPerSecond) vectors/s search=\(queriesPerSecond) qps")
 
         #expect(vectorsPerSecond > 10_000)
         #expect(queriesPerSecond > 100)
@@ -444,7 +444,7 @@ private func removeFileIfPresent(_ path: String) {
 }
 
 private func invalidGraphPayloadWithSelfEdge() -> Data {
-    var writer = TestGraphPayloadWriter()
+    var writer = InvalidGraphPayloadWriter()
     writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
     writer.writeUInt32(2)
     writer.writeUInt32(1)
@@ -470,7 +470,7 @@ private func invalidGraphPayloadWithSelfEdge() -> Data {
 }
 
 private func invalidGraphPayloadWithInvalidNeighborID() -> Data {
-    var writer = TestGraphPayloadWriter()
+    var writer = InvalidGraphPayloadWriter()
     writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
     writer.writeUInt32(2)
     writer.writeUInt32(1)
@@ -495,7 +495,7 @@ private func invalidGraphPayloadWithInvalidNeighborID() -> Data {
     return writer.data
 }
 
-private struct TestGraphPayloadWriter {
+private struct InvalidGraphPayloadWriter {
     var data = Data()
 
     mutating func writeBytes(_ bytes: [UInt8]) {

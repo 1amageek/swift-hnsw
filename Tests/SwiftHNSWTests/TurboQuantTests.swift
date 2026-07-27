@@ -432,7 +432,7 @@ struct TurboQuantIndexTests {
     }
 }
 
-// MARK: - Helpers
+// MARK: - Temporary Archive Lifecycle
 
 private func computeCosineGroundTruth(queries: [[Float]], vectors: [[Float]], k: Int) -> [[UInt64]] {
     let d = vectors[0].count

@@ -2,7 +2,7 @@
 import Accelerate
 #endif
 
-/// High-performance vector operations for native and Wasm builds.
+/// High-performance vector operations across supported execution platforms.
 enum VectorOperations {
     private typealias FloatSIMD = SIMD8<Float>
     private typealias Float16SIMD = SIMD8<Float16>

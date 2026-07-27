@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "swift-hnsw-cxx-backend-comparison",
+    name: "hnsw-reference-comparison",
     platforms: [
         .macOS(.v26)
     ],
@@ -15,7 +15,7 @@ let package = Package(
             name: "hnswlib",
             path: "Sources/hnswlib",
             sources: [
-                "hnswlib_swift_bridge.cpp",
+                "hnswlib_reference.cpp",
                 "space_f16.cpp",
                 "space_turboquant.cpp",
                 "turboquant_encoder.cpp"
@@ -26,7 +26,7 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "CxxBackendComparison",
+            name: "HNSWReferenceComparison",
             dependencies: [
                 .product(name: "SwiftHNSW", package: "swift-hnsw"),
                 "hnswlib"

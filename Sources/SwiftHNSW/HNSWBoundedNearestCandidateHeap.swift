@@ -1,4 +1,4 @@
-struct HNSWFixedNearestCandidateHeap {
+struct HNSWBoundedNearestCandidateHeap {
     private var storage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>
     private(set) var count: Int = 0
 

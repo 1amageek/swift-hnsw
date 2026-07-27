@@ -19,6 +19,6 @@ extension SearchResult: Comparable {
 
 extension SearchResult: CustomStringConvertible {
     public var description: String {
-        "SearchResult(label: \(label), distance: \(String(format: "%.4f", distance)))"
+        "SearchResult(label: \(label), distance: \(distance))"
     }
 }

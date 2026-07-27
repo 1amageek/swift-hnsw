@@ -2,7 +2,7 @@ import Testing
 @testable import SwiftHNSW
 
 @Suite("HNSW Index Tests")
-struct SwiftHNSWTests {
+struct HNSWIndexTests {
 
     @Test("Create index and add points")
     func testCreateIndexAndAddPoints() throws {

@@ -2,8 +2,8 @@
 // ANN-Benchmarks standard benchmarks for SwiftHNSW
 // Based on https://ann-benchmarks.com methodology
 //
-// Run all:     swift test --filter ANNBenchmarks
-// Run HNSW:    swift test --filter ANNBenchmarks/benchmark
+// Run all: xcodebuild test -scheme swift-hnsw -destination 'platform=macOS'
+// Run one suite with the corresponding xcodebuild -only-testing selector.
 
 import Testing
 import Foundation
@@ -68,7 +68,7 @@ struct BenchmarkPoint {
     let indexSizeKB: Double
 }
 
-// MARK: - String Formatting Helpers
+// MARK: - Measurement Report Formatting
 
 func pad(_ s: String, _ width: Int, left: Bool = false) -> String {
     if s.count >= width { return String(s.prefix(width)) }
@@ -783,7 +783,7 @@ struct ANNBenchmarks {
 
         print("\n")
         print(String(repeating: "=", count: 70))
-        print("Concurrent Read Performance (backend lock)")
+        print("Concurrent Read Performance (serialized index access)")
         print("n=\(n), d=\(d), k=\(k), queries/thread=\(queriesPerThread)")
         print(String(repeating: "=", count: 70))
 

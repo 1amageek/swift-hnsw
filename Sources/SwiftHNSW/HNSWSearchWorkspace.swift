@@ -1,5 +1,5 @@
-struct HNSWSearchScratch: Sendable {
-    private static let placeholder = HNSWNeighborCandidate(internalID: 0, distance: 0)
+struct HNSWSearchWorkspace: Sendable {
+    private static let emptyCandidateSlot = HNSWNeighborCandidate(internalID: 0, distance: 0)
 
     private var candidateQueueStorage: [HNSWNeighborCandidate] = []
     private var nearestCandidateStorage: [HNSWNeighborCandidate] = []
@@ -33,6 +33,6 @@ struct HNSWSearchScratch: Sendable {
         count: Int
     ) {
         guard storage.count < count else { return }
-        storage = [HNSWNeighborCandidate](repeating: Self.placeholder, count: count)
+        storage = [HNSWNeighborCandidate](repeating: Self.emptyCandidateSlot, count: count)
     }
 }

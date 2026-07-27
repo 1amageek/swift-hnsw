@@ -1,4 +1,4 @@
-struct HNSWFixedFarthestCandidateHeap {
+struct HNSWBoundedFarthestCandidateHeap {
     private var storage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>
     private(set) var count: Int = 0
 
@@ -69,7 +69,7 @@ struct HNSWFixedFarthestCandidateHeap {
             return sortedElements()
         }
 
-        var topK = HNSWFixedFarthestCandidateHeap(storage: resultStorage)
+        var topK = HNSWBoundedFarthestCandidateHeap(storage: resultStorage)
         for index in 0..<count {
             let element = storage[index]
             if topK.count < boundedLimit {
@@ -100,7 +100,7 @@ struct HNSWFixedFarthestCandidateHeap {
             )
         }
 
-        var topK = HNSWFixedFarthestCandidateHeap(storage: resultStorage)
+        var topK = HNSWBoundedFarthestCandidateHeap(storage: resultStorage)
         for index in 0..<count {
             let element = storage[index]
             if topK.count < boundedLimit {

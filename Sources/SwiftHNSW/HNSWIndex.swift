@@ -1,11 +1,11 @@
 #if canImport(FoundationEssentials)
 import FoundationEssentials
-#else
+#elseif canImport(Foundation)
 import Foundation
 #endif
 import Synchronization
 
-/// Swift-native HNSW graph index.
+/// In-memory HNSW graph index.
 public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
 
     private struct Entry: Sendable {
@@ -31,9 +31,9 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
         var levelGenerator: HNSWLevelGenerator
         var visited: [UInt16]
         var visitedTag: UInt16
-        var queryScratch: [Float]
-        var halfQueryScratch: [Float16]
-        var searchScratch: HNSWSearchScratch
+        var queryWorkspace: [Float]
+        var halfPrecisionQueryWorkspace: [Float16]
+        var searchWorkspace: HNSWSearchWorkspace
     }
 
     public let dimensions: Int
@@ -86,9 +86,9 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
             levelGenerator: HNSWLevelGenerator(seed: configuration.randomSeed),
             visited: [],
             visitedTag: 0,
-            queryScratch: usesHalfStorage ? [] : [Float](repeating: 0, count: dimensions),
-            halfQueryScratch: usesHalfStorage ? [Float16](repeating: 0, count: dimensions) : [],
-            searchScratch: HNSWSearchScratch()
+            queryWorkspace: usesHalfStorage ? [] : [Float](repeating: 0, count: dimensions),
+            halfPrecisionQueryWorkspace: usesHalfStorage ? [Float16](repeating: 0, count: dimensions) : [],
+            searchWorkspace: HNSWSearchWorkspace()
         ))
     }
 
@@ -132,7 +132,7 @@ extension HNSWIndex {
 
     /// Add a borrowed vector to the index without materializing an intermediate array.
     ///
-    /// The Swift backend stores vectors in an internal contiguous arena. This call performs
+    /// The index stores vectors in an owned contiguous region. This call performs
     /// the required ownership copy exactly once and avoids temporary slice arrays.
     public func add(_ vector: UnsafeBufferPointer<Scalar>, label: UInt64) throws {
         try validateDimensions(vector.count)
@@ -171,24 +171,24 @@ extension HNSWIndex {
                     return searchNormalizedHalf(halfQuery, k: k, state: &state)
                 }
 
-                ensureCapacity(&state.halfQueryScratch, count: dimensions)
-                state.halfQueryScratch.withUnsafeMutableBufferPointer { scratch in
-                    storeNormalizedHalfVector(query, into: scratch)
+                ensureCapacity(&state.halfPrecisionQueryWorkspace, count: dimensions)
+                state.halfPrecisionQueryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
+                    storeNormalizedHalfVector(query, into: preparedQuery)
                 }
-                return state.halfQueryScratch.withUnsafeBufferPointer { preparedQuery in
+                return state.halfPrecisionQueryWorkspace.withUnsafeBufferPointer { preparedQuery in
                     searchNormalizedHalf(preparedQuery, k: k, state: &state)
                 }
             }
 
-            ensureCapacity(&state.queryScratch, count: dimensions)
-            state.queryScratch.withUnsafeMutableBufferPointer { scratch in
+            ensureCapacity(&state.queryWorkspace, count: dimensions)
+            state.queryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
                 if metric.requiresNormalization {
-                    storeNormalizedVector(query, into: scratch)
+                    storeNormalizedVector(query, into: preparedQuery)
                 } else {
-                    storeVector(query, into: scratch)
+                    storeVector(query, into: preparedQuery)
                 }
             }
-            return state.queryScratch.withUnsafeBufferPointer { preparedQuery in
+            return state.queryWorkspace.withUnsafeBufferPointer { preparedQuery in
                 searchNormalized(preparedQuery, k: k, state: &state)
             }
         }
@@ -226,24 +226,24 @@ extension HNSWIndex {
                     return searchNormalizedHalf(halfQuery, k: k, into: results, state: &state)
                 }
 
-                ensureCapacity(&state.halfQueryScratch, count: dimensions)
-                state.halfQueryScratch.withUnsafeMutableBufferPointer { scratch in
-                    storeNormalizedHalfVector(query, into: scratch)
+                ensureCapacity(&state.halfPrecisionQueryWorkspace, count: dimensions)
+                state.halfPrecisionQueryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
+                    storeNormalizedHalfVector(query, into: preparedQuery)
                 }
-                return state.halfQueryScratch.withUnsafeBufferPointer { preparedQuery in
+                return state.halfPrecisionQueryWorkspace.withUnsafeBufferPointer { preparedQuery in
                     searchNormalizedHalf(preparedQuery, k: k, into: results, state: &state)
                 }
             }
 
-            ensureCapacity(&state.queryScratch, count: dimensions)
-            state.queryScratch.withUnsafeMutableBufferPointer { scratch in
+            ensureCapacity(&state.queryWorkspace, count: dimensions)
+            state.queryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
                 if metric.requiresNormalization {
-                    storeNormalizedVector(query, into: scratch)
+                    storeNormalizedVector(query, into: preparedQuery)
                 } else {
-                    storeVector(query, into: scratch)
+                    storeVector(query, into: preparedQuery)
                 }
             }
-            return state.queryScratch.withUnsafeBufferPointer { preparedQuery in
+            return state.queryWorkspace.withUnsafeBufferPointer { preparedQuery in
                 searchNormalized(preparedQuery, k: k, into: results, state: &state)
             }
         }
@@ -290,7 +290,6 @@ extension HNSWIndex {
         }
     }
 }
-
 extension HNSWIndex {
 
     @discardableResult
@@ -378,25 +377,25 @@ extension HNSWIndex {
                         )
                         results.append(searchNormalizedHalf(halfQuery, k: k, state: &state))
                     } else {
-                        ensureCapacity(&state.halfQueryScratch, count: dimensions)
-                        state.halfQueryScratch.withUnsafeMutableBufferPointer { scratch in
-                            storeNormalizedHalfVector(query, into: scratch)
+                        ensureCapacity(&state.halfPrecisionQueryWorkspace, count: dimensions)
+                        state.halfPrecisionQueryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
+                            storeNormalizedHalfVector(query, into: preparedQuery)
                         }
-                        let searchResults = state.halfQueryScratch.withUnsafeBufferPointer { preparedQuery in
+                        let searchResults = state.halfPrecisionQueryWorkspace.withUnsafeBufferPointer { preparedQuery in
                             searchNormalizedHalf(preparedQuery, k: k, state: &state)
                         }
                         results.append(searchResults)
                     }
                 } else {
-                    ensureCapacity(&state.queryScratch, count: dimensions)
-                    state.queryScratch.withUnsafeMutableBufferPointer { scratch in
+                    ensureCapacity(&state.queryWorkspace, count: dimensions)
+                    state.queryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
                         if metric.requiresNormalization {
-                            storeNormalizedVector(query, into: scratch)
+                            storeNormalizedVector(query, into: preparedQuery)
                         } else {
-                            storeVector(query, into: scratch)
+                            storeVector(query, into: preparedQuery)
                         }
                     }
-                    let searchResults = state.queryScratch.withUnsafeBufferPointer { preparedQuery in
+                    let searchResults = state.queryWorkspace.withUnsafeBufferPointer { preparedQuery in
                         searchNormalized(preparedQuery, k: k, state: &state)
                     }
                     results.append(searchResults)
@@ -420,6 +419,7 @@ extension HNSWIndex {
     }
 }
 
+#if canImport(FoundationEssentials) || canImport(Foundation)
 extension HNSWIndex {
 
     public func save(to url: URL) throws {
@@ -463,6 +463,7 @@ extension HNSWIndex {
         }
     }
 }
+#endif
 
 extension HNSWIndex {
 
@@ -493,7 +494,7 @@ extension HNSWIndex {
     ///
     /// Float and Float16 indexes expose the internal contiguous arena without creating an
     /// intermediate array. Other scalar conformances fall back to materialization because
-    /// the Swift backend stores comparison values as Float.
+    /// comparison values are stored as Float.
     public func withVector<R: Sendable>(
         label: UInt64,
         _ body: @Sendable (UnsafeBufferPointer<Scalar>) throws -> R
@@ -541,11 +542,12 @@ extension HNSWIndex {
     }
 }
 
+#if canImport(FoundationEssentials) || canImport(Foundation)
 extension HNSWIndex {
 
     public func serialize() throws -> Data {
         state.withLock {
-            var writer = FlatIndexWriter()
+            var writer = HNSWArchiveWriter()
             writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
             writer.writeUInt32(2)
             writer.writeUInt32(UInt32(dimensions))
@@ -602,11 +604,11 @@ extension HNSWIndex {
         maxElements: Int = 0
     ) throws -> HNSWIndex {
         do {
-            var reader = FlatIndexReader(data: data)
+            var reader = HNSWArchiveReader(data: data)
             let magic = try reader.readMagic()
             let version = try reader.readUInt32()
             switch magic {
-            case FlatIndexReader.graphMagic:
+            case HNSWArchiveReader.graphMagic:
                 return try loadGraph(
                     reader: &reader,
                     version: version,
@@ -614,7 +616,7 @@ extension HNSWIndex {
                     metric: metric,
                     maxElements: maxElements
                 )
-            case FlatIndexReader.flatMagic:
+            case HNSWArchiveReader.flatMagic:
                 return try loadFlat(
                     reader: &reader,
                     version: version,
@@ -623,7 +625,7 @@ extension HNSWIndex {
                     maxElements: maxElements
                 )
             default:
-                throw HNSWError.loadFailed("Invalid Swift HNSW index magic")
+                throw HNSWError.loadFailed("Invalid HNSW index archive magic")
             }
         } catch let error as HNSWError {
             throw error
@@ -633,7 +635,7 @@ extension HNSWIndex {
     }
 
     private static func loadGraph(
-        reader: inout FlatIndexReader,
+        reader: inout HNSWArchiveReader,
         version: UInt32,
         dimensions: Int,
         metric: DistanceMetric,
@@ -796,8 +798,8 @@ extension HNSWIndex {
             $0.levelGenerator = HNSWLevelGenerator(state: generatorState)
             $0.visited = [UInt16](repeating: 0, count: labelCount)
             $0.visitedTag = 0
-            $0.queryScratch = Scalar.self == Float16.self ? [] : [Float](repeating: 0, count: dimensions)
-            $0.halfQueryScratch = Scalar.self == Float16.self ? [Float16](repeating: 0, count: dimensions) : []
+            $0.queryWorkspace = Scalar.self == Float16.self ? [] : [Float](repeating: 0, count: dimensions)
+            $0.halfPrecisionQueryWorkspace = Scalar.self == Float16.self ? [Float16](repeating: 0, count: dimensions) : []
         }
         return index
     }
@@ -882,7 +884,7 @@ extension HNSWIndex {
     }
 
     private static func loadFlat(
-        reader: inout FlatIndexReader,
+        reader: inout HNSWArchiveReader,
         version: UInt32,
         dimensions: Int,
         metric: DistanceMetric,
@@ -971,13 +973,14 @@ extension HNSWIndex {
             $0.levelGenerator = generator
             $0.visited = [UInt16](repeating: 0, count: labelCount)
             $0.visitedTag = 0
-            $0.queryScratch = Scalar.self == Float16.self ? [] : [Float](repeating: 0, count: dimensions)
-            $0.halfQueryScratch = Scalar.self == Float16.self ? [Float16](repeating: 0, count: dimensions) : []
+            $0.queryWorkspace = Scalar.self == Float16.self ? [] : [Float](repeating: 0, count: dimensions)
+            $0.halfPrecisionQueryWorkspace = Scalar.self == Float16.self ? [Float16](repeating: 0, count: dimensions) : []
             index.rebuildGraph(state: &$0)
         }
         return index
     }
 }
+#endif
 
 extension HNSWIndex {
 
@@ -1191,11 +1194,11 @@ extension HNSWIndex {
         let nearestCapacity = max(1, min(effectiveEF, nodeCount))
         let resultCapacity = max(1, min(k, nodeCount))
         let results = Array<SearchResult>(unsafeUninitializedCapacity: resultCapacity) { output, initializedCount in
-            initializedCount = state.searchScratch.withCandidateBuffers(
+            initializedCount = state.searchWorkspace.withCandidateBuffers(
                 candidateCapacity: candidateCapacity,
                 nearestCapacity: nearestCapacity,
                 resultCapacity: resultCapacity
-            ) { candidateScratch, nearestScratch, resultScratch in
+            ) { candidateQueueStorage, nearestCandidateStorage, resultCandidateStorage in
                 state.visited.withUnsafeMutableBufferPointer { visited in
                     state.comparisonStorage.withUnsafeBufferPointer { storage in
                         switch metric {
@@ -1214,9 +1217,9 @@ extension HNSWIndex {
                                 efSearch: state.efSearch,
                                 visited: visited,
                                 visitedTag: &visitedTag,
-                                candidateScratch: candidateScratch,
-                                nearestScratch: nearestScratch,
-                                resultScratch: resultScratch,
+                                candidateQueueStorage: candidateQueueStorage,
+                                nearestCandidateStorage: nearestCandidateStorage,
+                                resultCandidateStorage: resultCandidateStorage,
                                 distanceComputer: HNSWDistanceComputers.L2.self
                             )
                         case .innerProduct, .cosine:
@@ -1234,9 +1237,9 @@ extension HNSWIndex {
                                 efSearch: state.efSearch,
                                 visited: visited,
                                 visitedTag: &visitedTag,
-                                candidateScratch: candidateScratch,
-                                nearestScratch: nearestScratch,
-                                resultScratch: resultScratch,
+                                candidateQueueStorage: candidateQueueStorage,
+                                nearestCandidateStorage: nearestCandidateStorage,
+                                resultCandidateStorage: resultCandidateStorage,
                                 distanceComputer: HNSWDistanceComputers.InnerProduct.self
                             )
                         }
@@ -1261,11 +1264,11 @@ extension HNSWIndex {
         let candidateCapacity = max(1, nodeCount)
         let nearestCapacity = max(1, min(effectiveEF, nodeCount))
         let resultCapacity = max(1, min(k, nodeCount))
-        let resultCount = state.searchScratch.withCandidateBuffers(
+        let resultCount = state.searchWorkspace.withCandidateBuffers(
             candidateCapacity: candidateCapacity,
             nearestCapacity: nearestCapacity,
             resultCapacity: resultCapacity
-        ) { candidateScratch, nearestScratch, resultScratch in
+        ) { candidateQueueStorage, nearestCandidateStorage, resultCandidateStorage in
             state.visited.withUnsafeMutableBufferPointer { visited in
                 state.comparisonStorage.withUnsafeBufferPointer { storage in
                     switch metric {
@@ -1284,9 +1287,9 @@ extension HNSWIndex {
                             efSearch: state.efSearch,
                             visited: visited,
                             visitedTag: &visitedTag,
-                            candidateScratch: candidateScratch,
-                            nearestScratch: nearestScratch,
-                            resultScratch: resultScratch,
+                            candidateQueueStorage: candidateQueueStorage,
+                            nearestCandidateStorage: nearestCandidateStorage,
+                            resultCandidateStorage: resultCandidateStorage,
                             distanceComputer: HNSWDistanceComputers.L2.self
                         )
                     case .innerProduct, .cosine:
@@ -1304,9 +1307,9 @@ extension HNSWIndex {
                             efSearch: state.efSearch,
                             visited: visited,
                             visitedTag: &visitedTag,
-                            candidateScratch: candidateScratch,
-                            nearestScratch: nearestScratch,
-                            resultScratch: resultScratch,
+                            candidateQueueStorage: candidateQueueStorage,
+                            nearestCandidateStorage: nearestCandidateStorage,
+                            resultCandidateStorage: resultCandidateStorage,
                             distanceComputer: HNSWDistanceComputers.InnerProduct.self
                         )
                     }
@@ -1330,11 +1333,11 @@ extension HNSWIndex {
         let nearestCapacity = max(1, min(effectiveEF, nodeCount))
         let resultCapacity = max(1, min(k, nodeCount))
         let results = Array<SearchResult>(unsafeUninitializedCapacity: resultCapacity) { output, initializedCount in
-            initializedCount = state.searchScratch.withCandidateBuffers(
+            initializedCount = state.searchWorkspace.withCandidateBuffers(
                 candidateCapacity: candidateCapacity,
                 nearestCapacity: nearestCapacity,
                 resultCapacity: resultCapacity
-            ) { candidateScratch, nearestScratch, resultScratch in
+            ) { candidateQueueStorage, nearestCandidateStorage, resultCandidateStorage in
                 state.visited.withUnsafeMutableBufferPointer { visited in
                     state.halfComparisonStorage.withUnsafeBufferPointer { storage in
                         switch metric {
@@ -1353,9 +1356,9 @@ extension HNSWIndex {
                                 efSearch: state.efSearch,
                                 visited: visited,
                                 visitedTag: &visitedTag,
-                                candidateScratch: candidateScratch,
-                                nearestScratch: nearestScratch,
-                                resultScratch: resultScratch,
+                                candidateQueueStorage: candidateQueueStorage,
+                                nearestCandidateStorage: nearestCandidateStorage,
+                                resultCandidateStorage: resultCandidateStorage,
                                 distanceComputer: HNSWDistanceComputers.L2.self
                             )
                         case .innerProduct, .cosine:
@@ -1373,9 +1376,9 @@ extension HNSWIndex {
                                 efSearch: state.efSearch,
                                 visited: visited,
                                 visitedTag: &visitedTag,
-                                candidateScratch: candidateScratch,
-                                nearestScratch: nearestScratch,
-                                resultScratch: resultScratch,
+                                candidateQueueStorage: candidateQueueStorage,
+                                nearestCandidateStorage: nearestCandidateStorage,
+                                resultCandidateStorage: resultCandidateStorage,
                                 distanceComputer: HNSWDistanceComputers.InnerProduct.self
                             )
                         }
@@ -1400,11 +1403,11 @@ extension HNSWIndex {
         let candidateCapacity = max(1, nodeCount)
         let nearestCapacity = max(1, min(effectiveEF, nodeCount))
         let resultCapacity = max(1, min(k, nodeCount))
-        let resultCount = state.searchScratch.withCandidateBuffers(
+        let resultCount = state.searchWorkspace.withCandidateBuffers(
             candidateCapacity: candidateCapacity,
             nearestCapacity: nearestCapacity,
             resultCapacity: resultCapacity
-        ) { candidateScratch, nearestScratch, resultScratch in
+        ) { candidateQueueStorage, nearestCandidateStorage, resultCandidateStorage in
             state.visited.withUnsafeMutableBufferPointer { visited in
                 state.halfComparisonStorage.withUnsafeBufferPointer { storage in
                     switch metric {
@@ -1423,9 +1426,9 @@ extension HNSWIndex {
                             efSearch: state.efSearch,
                             visited: visited,
                             visitedTag: &visitedTag,
-                            candidateScratch: candidateScratch,
-                            nearestScratch: nearestScratch,
-                            resultScratch: resultScratch,
+                            candidateQueueStorage: candidateQueueStorage,
+                            nearestCandidateStorage: nearestCandidateStorage,
+                            resultCandidateStorage: resultCandidateStorage,
                             distanceComputer: HNSWDistanceComputers.L2.self
                         )
                     case .innerProduct, .cosine:
@@ -1443,9 +1446,9 @@ extension HNSWIndex {
                             efSearch: state.efSearch,
                             visited: visited,
                             visitedTag: &visitedTag,
-                            candidateScratch: candidateScratch,
-                            nearestScratch: nearestScratch,
-                            resultScratch: resultScratch,
+                            candidateQueueStorage: candidateQueueStorage,
+                            nearestCandidateStorage: nearestCandidateStorage,
+                            resultCandidateStorage: resultCandidateStorage,
                             distanceComputer: HNSWDistanceComputers.InnerProduct.self
                         )
                     }
@@ -1469,9 +1472,9 @@ extension HNSWIndex {
         efSearch: Int,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        resultScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        resultCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type
     ) -> [SearchResult] {
         var current = entryPoint
@@ -1511,9 +1514,9 @@ extension HNSWIndex {
             liveCount: liveCount,
             visited: visited,
             visitedTag: &visitedTag,
-            candidateScratch: candidateScratch,
-            nearestScratch: nearestScratch,
-            resultScratch: resultScratch,
+            candidateQueueStorage: candidateQueueStorage,
+            nearestCandidateStorage: nearestCandidateStorage,
+            resultCandidateStorage: resultCandidateStorage,
             distanceComputer: Distance.self,
             resultLimit: k
         )
@@ -1559,9 +1562,9 @@ extension HNSWIndex {
         efSearch: Int,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        resultScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        resultCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type
     ) -> Int {
         var current = entryPoint
@@ -1599,9 +1602,9 @@ extension HNSWIndex {
                 labelOrder: labelOrder,
                 visited: visited,
                 visitedTag: &visitedTag,
-                candidateScratch: candidateScratch,
-                nearestScratch: nearestScratch,
-                resultScratch: resultScratch,
+                candidateQueueStorage: candidateQueueStorage,
+                nearestCandidateStorage: nearestCandidateStorage,
+                resultCandidateStorage: resultCandidateStorage,
                 distanceComputer: Distance.self,
                 resultLimit: k,
                 into: results
@@ -1621,9 +1624,9 @@ extension HNSWIndex {
             liveCount: liveCount,
             visited: visited,
             visitedTag: &visitedTag,
-            candidateScratch: candidateScratch,
-            nearestScratch: nearestScratch,
-            resultScratch: resultScratch,
+            candidateQueueStorage: candidateQueueStorage,
+            nearestCandidateStorage: nearestCandidateStorage,
+            resultCandidateStorage: resultCandidateStorage,
             distanceComputer: Distance.self,
             resultLimit: k
         )
@@ -1639,7 +1642,7 @@ extension HNSWIndex {
     }
 
     private var levelMultiplier: Double {
-        1.0 / Foundation.log(Double(max(2, configuration.m)))
+        1.0 / hnswNaturalLog(Double(max(2, configuration.m)))
     }
 
     @inline(__always)
@@ -1738,10 +1741,10 @@ extension HNSWIndex {
                 let nodeCount = state.labelOrder.count
                 let candidateCapacity = max(1, nodeCount)
                 let nearestCapacity = max(1, min(efConstruction, nodeCount))
-                var candidates = state.searchScratch.withCandidateBuffers(
+                var candidates = state.searchWorkspace.withCandidateBuffers(
                     candidateCapacity: candidateCapacity,
                     nearestCapacity: nearestCapacity
-                ) { candidateScratch, nearestScratch, _ in
+                ) { candidateQueueStorage, nearestCandidateStorage, _ in
                     state.visited.withUnsafeMutableBufferPointer { visited in
                         searchLayerForNode(
                             internalID,
@@ -1756,8 +1759,8 @@ extension HNSWIndex {
                             liveCount: state.liveCount,
                             visited: visited,
                             visitedTag: &visitedTag,
-                            candidateScratch: candidateScratch,
-                            nearestScratch: nearestScratch,
+                            candidateQueueStorage: candidateQueueStorage,
+                            nearestCandidateStorage: nearestCandidateStorage,
                             distanceComputer: Distance.self
                         )
                     }
@@ -1906,8 +1909,8 @@ extension HNSWIndex {
         liveCount: Int,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type
     ) -> [HNSWNeighborCandidate] {
         searchLayerForNodeWithVisitedArray(
@@ -1929,8 +1932,8 @@ extension HNSWIndex {
             liveCount: liveCount,
             visited: visited,
             visitedTag: &visitedTag,
-            candidateScratch: candidateScratch,
-            nearestScratch: nearestScratch,
+            candidateQueueStorage: candidateQueueStorage,
+            nearestCandidateStorage: nearestCandidateStorage,
             distanceComputer: Distance.self
         )
     }
@@ -1949,8 +1952,8 @@ extension HNSWIndex {
         liveCount: Int,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type
     ) -> [HNSWNeighborCandidate] {
         if !includeDeleted, liveCount == labelOrder.count {
@@ -1964,8 +1967,8 @@ extension HNSWIndex {
                 connections: connections,
                 visited: visited,
                 visitedTag: &visitedTag,
-                candidateScratch: candidateScratch,
-                nearestScratch: nearestScratch,
+                candidateQueueStorage: candidateQueueStorage,
+                nearestCandidateStorage: nearestCandidateStorage,
                 distanceComputer: Distance.self
             )
         }
@@ -1973,8 +1976,8 @@ extension HNSWIndex {
         let effectiveEF = max(1, ef)
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
-        var candidateQueue = HNSWFixedNearestCandidateHeap(storage: candidateScratch)
-        var nearest = HNSWFixedFarthestCandidateHeap(storage: nearestScratch)
+        var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
+        var nearest = HNSWBoundedFarthestCandidateHeap(storage: nearestCandidateStorage)
         var lowerBound = Float.greatestFiniteMagnitude
 
         let entry = HNSWNeighborCandidate(
@@ -2038,15 +2041,15 @@ extension HNSWIndex {
         connections: borrowing HNSWConnectionStore,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type
     ) -> [HNSWNeighborCandidate] {
         let effectiveEF = max(1, ef)
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
-        var candidateQueue = HNSWFixedNearestCandidateHeap(storage: candidateScratch)
-        var nearest = HNSWFixedFarthestCandidateHeap(storage: nearestScratch)
+        var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
+        var nearest = HNSWBoundedFarthestCandidateHeap(storage: nearestCandidateStorage)
 
         let entry = HNSWNeighborCandidate(
             internalID: entryPoint,
@@ -2108,9 +2111,9 @@ extension HNSWIndex {
         liveCount: Int,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        resultScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        resultCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type,
         resultLimit: Int
     ) -> [HNSWNeighborCandidate] {
@@ -2133,9 +2136,9 @@ extension HNSWIndex {
             liveCount: liveCount,
             visited: visited,
             visitedTag: &visitedTag,
-            candidateScratch: candidateScratch,
-            nearestScratch: nearestScratch,
-            resultScratch: resultScratch,
+            candidateQueueStorage: candidateQueueStorage,
+            nearestCandidateStorage: nearestCandidateStorage,
+            resultCandidateStorage: resultCandidateStorage,
             distanceComputer: Distance.self,
             resultLimit: resultLimit
         )
@@ -2155,9 +2158,9 @@ extension HNSWIndex {
         liveCount: Int,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        resultScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        resultCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type,
         resultLimit: Int
     ) -> [HNSWNeighborCandidate] {
@@ -2172,9 +2175,9 @@ extension HNSWIndex {
                     connections: connections,
                     visited: visited,
                     visitedTag: &visitedTag,
-                    candidateScratch: candidateScratch,
-                    nearestScratch: nearestScratch,
-                    resultScratch: resultScratch,
+                    candidateQueueStorage: candidateQueueStorage,
+                    nearestCandidateStorage: nearestCandidateStorage,
+                    resultCandidateStorage: resultCandidateStorage,
                     distanceComputer: Distance.self,
                     resultLimit: resultLimit
                 )
@@ -2189,9 +2192,9 @@ extension HNSWIndex {
                 connections: connections,
                 visited: visited,
                 visitedTag: &visitedTag,
-                candidateScratch: candidateScratch,
-                nearestScratch: nearestScratch,
-                resultScratch: resultScratch,
+                candidateQueueStorage: candidateQueueStorage,
+                nearestCandidateStorage: nearestCandidateStorage,
+                resultCandidateStorage: resultCandidateStorage,
                 distanceComputer: Distance.self,
                 resultLimit: resultLimit
             )
@@ -2200,8 +2203,8 @@ extension HNSWIndex {
         let effectiveEF = max(1, ef)
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
-        var candidateQueue = HNSWFixedNearestCandidateHeap(storage: candidateScratch)
-        var nearest = HNSWFixedFarthestCandidateHeap(storage: nearestScratch)
+        var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
+        var nearest = HNSWBoundedFarthestCandidateHeap(storage: nearestCandidateStorage)
         var lowerBound = Float.greatestFiniteMagnitude
 
         let entry = HNSWNeighborCandidate(
@@ -2252,7 +2255,7 @@ extension HNSWIndex {
             }
         }
 
-        return nearest.closestSorted(limit: resultLimit, using: resultScratch)
+        return nearest.closestSorted(limit: resultLimit, using: resultCandidateStorage)
     }
 
     private func searchLayerForQueryBareLevel0<Stored: HNSWScalar, Distance: HNSWDistanceComputers.Computer>(
@@ -2264,17 +2267,17 @@ extension HNSWIndex {
         connections: borrowing HNSWConnectionStore,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        resultScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        resultCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type,
         resultLimit: Int
     ) -> [HNSWNeighborCandidate] {
         let effectiveEF = max(1, ef)
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
-        var candidateQueue = HNSWFixedNearestCandidateHeap(storage: candidateScratch)
-        var nearest = HNSWFixedFarthestCandidateHeap(storage: nearestScratch)
+        var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
+        var nearest = HNSWBoundedFarthestCandidateHeap(storage: nearestCandidateStorage)
 
         let entry = HNSWNeighborCandidate(
             internalID: entryPoint,
@@ -2320,7 +2323,7 @@ extension HNSWIndex {
             }
         }
 
-        return nearest.closestSorted(limit: resultLimit, using: resultScratch)
+        return nearest.closestSorted(limit: resultLimit, using: resultCandidateStorage)
     }
 
     private func searchLayerForQueryBareLevel0<Stored: HNSWScalar, Distance: HNSWDistanceComputers.Computer>(
@@ -2333,9 +2336,9 @@ extension HNSWIndex {
         labelOrder: borrowing [UInt64],
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        resultScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        resultCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type,
         resultLimit: Int,
         into results: UnsafeMutableBufferPointer<SearchResult>
@@ -2343,8 +2346,8 @@ extension HNSWIndex {
         let effectiveEF = max(1, ef)
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
-        var candidateQueue = HNSWFixedNearestCandidateHeap(storage: candidateScratch)
-        var nearest = HNSWFixedFarthestCandidateHeap(storage: nearestScratch)
+        var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
+        var nearest = HNSWBoundedFarthestCandidateHeap(storage: nearestCandidateStorage)
 
         let entry = HNSWNeighborCandidate(
             internalID: entryPoint,
@@ -2392,7 +2395,7 @@ extension HNSWIndex {
 
         return nearest.writeClosestSorted(
             limit: resultLimit,
-            using: resultScratch,
+            using: resultCandidateStorage,
             to: results,
             labelOrder: labelOrder,
             metric: metric
@@ -2409,17 +2412,17 @@ extension HNSWIndex {
         connections: borrowing HNSWConnectionStore,
         visited: UnsafeMutableBufferPointer<UInt16>,
         visitedTag: inout UInt16,
-        candidateScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        nearestScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
-        resultScratch: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        candidateQueueStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        nearestCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        resultCandidateStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
         distanceComputer: Distance.Type,
         resultLimit: Int
     ) -> [HNSWNeighborCandidate] {
         let effectiveEF = max(1, ef)
         let tag = nextVisitedTag(visited: visited, visitedTag: &visitedTag)
 
-        var candidateQueue = HNSWFixedNearestCandidateHeap(storage: candidateScratch)
-        var nearest = HNSWFixedFarthestCandidateHeap(storage: nearestScratch)
+        var candidateQueue = HNSWBoundedNearestCandidateHeap(storage: candidateQueueStorage)
+        var nearest = HNSWBoundedFarthestCandidateHeap(storage: nearestCandidateStorage)
 
         let entry = HNSWNeighborCandidate(
             internalID: entryPoint,
@@ -2465,7 +2468,7 @@ extension HNSWIndex {
             }
         }
 
-        return nearest.closestSorted(limit: resultLimit, using: resultScratch)
+        return nearest.closestSorted(limit: resultLimit, using: resultCandidateStorage)
     }
 
     private func selectNeighbors<Stored: HNSWScalar, Distance: HNSWDistanceComputers.Computer>(
@@ -2636,14 +2639,15 @@ extension HNSWIndex {
 }
 
 extension HNSWIndex {
-    var swiftBackendStorageCounts: (float: Int, half: Int) {
+    var comparisonValueCounts: (singlePrecision: Int, halfPrecision: Int) {
         state.withLock {
             ($0.comparisonStorage.count, $0.halfComparisonStorage.count)
         }
     }
 }
 
-private struct FlatIndexWriter {
+#if canImport(FoundationEssentials) || canImport(Foundation)
+private struct HNSWArchiveWriter {
     var data = Data()
 
     mutating func writeBytes(_ bytes: [UInt8]) {
@@ -2686,7 +2690,7 @@ private struct FlatIndexWriter {
     }
 }
 
-private struct FlatIndexReader {
+private struct HNSWArchiveReader {
     static let flatMagic: UInt64 = 0x414C_4657_534E_4853
     static let graphMagic: UInt64 = 0x4652_4757_534E_4853
 
@@ -2766,6 +2770,7 @@ private struct FlatIndexReader {
         }
     }
 }
+#endif
 
 
 // MARK: - Type Aliases for Convenience

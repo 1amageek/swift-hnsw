@@ -1,20 +1,20 @@
 # SwiftHNSW
 
 A Swift vector search library for Hierarchical Navigable Small World style nearest-neighbor APIs.
-The production backend is implemented in Swift and supports WebAssembly builds. A separate C++ reference benchmark package uses [hnswlib](https://github.com/nmslib/hnswlib) only for performance comparison.
+The production index supports WebAssembly builds. A separate reference benchmark package uses [hnswlib](https://github.com/nmslib/hnswlib) only for performance comparison.
 
 ## Features
 
-- **Swift Backend Only in Production**: Default builds do not include or compile C++ targets
-- **Reference C++ Benchmarks**: hnswlib is kept in a separate benchmark package for comparison only
+- **Single Production Index**: Default builds do not include the hnswlib reference target
+- **Reference Benchmarks**: hnswlib is kept in a separate benchmark package for comparison only
 - **Fast Vector Search**: Nearest-neighbor queries through a stable Swift API
 - **Contiguous Runtime Storage**: Pure Swift stores Float32 and Float16 vectors in type-specific contiguous arenas and graph edges in a fixed-slot connection store
 - **Float16 Support**: Native half-precision for 50% memory reduction
 - **TurboQuant**: 4-bit vector quantization with HD³ rotation for 6-8x memory compression
 - **Multiple Distance Metrics**: L2 (Euclidean), Inner Product, and Cosine similarity
-- **Thread-Safe**: Sendable API with backend-specific synchronization
+- **Thread-Safe**: Sendable API with serialized index-state access
 - **Batch Operations**: Efficient bulk add and search operations
-- **Persistence**: Save and load indexes to/from disk
+- **Persistence**: Save and load indexes on platforms that provide FoundationEssentials or Foundation
 - **Swift 6 Ready**: Full Sendable conformance for modern concurrency
 
 ## Requirements
@@ -45,23 +45,23 @@ Then add `SwiftHNSW` to your target dependencies:
 )
 ```
 
-### Backend Selection
+### Package Composition
 
-SwiftHNSW uses the Swift backend in production. The root package has no C++ target:
+The root package contains the production HNSW index and has no hnswlib target:
 
 ```bash
 swift build
-swift test
+xcodebuild test -scheme swift-hnsw -destination 'platform=macOS'
 swift build --swift-sdk swift-6.3.1-RELEASE_wasm
 ```
 
 Run the optional hnswlib reference comparison from its separate benchmark package:
 
 ```bash
-BACKEND_COMPARISON_ITERATIONS=5 swift run -c release --package-path Benchmarks/CxxBackendComparison CxxBackendComparison
+REFERENCE_COMPARISON_ITERATIONS=5 swift run -c release --package-path Benchmarks/HNSWReferenceComparison HNSWReferenceComparison
 ```
 
-The Pure Swift backend is the portability and production baseline. The C++ code is retained only as a benchmark reference and is not part of default library builds.
+The production index is the portability baseline. The hnswlib code is retained only as a benchmark reference and is not part of default library builds.
 
 ## Quick Start
 
@@ -280,6 +280,8 @@ try index.unmarkDeleted(label: 0)
 
 ### Persistence
 
+Persistence APIs are available when FoundationEssentials or Foundation is present. Foundation-free Embedded targets provide the in-memory index and search APIs without file or `Data` archive APIs.
+
 ```swift
 // Save index
 try index.save(to: URL(fileURLWithPath: "/path/to/index.dat"))
@@ -307,14 +309,14 @@ index.capacity   // Maximum capacity
 index.isEmpty    // Boolean check
 ```
 
-## Backend Semantics
+## Index Semantics
 
-| Backend | Selection | Search behavior | Synchronization |
+| Index | Selection | Search behavior | Synchronization |
 |---------|-----------|-----------------|-----------------|
-| Swift backend | Root package default | Approximate HNSW graph search | Serialized state access with `Mutex` |
-| C++ reference | `Benchmarks/CxxBackendComparison` only | hnswlib reference search | Benchmark-local bridge lock / native hnswlib state |
+| Production index | Root package default | Approximate HNSW graph search | Serialized state access with `Mutex` |
+| hnswlib reference | `Benchmarks/HNSWReferenceComparison` only | hnswlib reference search | Reference-owned state |
 
-The root package exposes the Swift backend API and typed errors. The C++ reference is intentionally outside the production package graph.
+The root package exposes the production index API and typed errors. The hnswlib reference is intentionally outside the production package graph.
 
 ## HNSW Algorithm
 
@@ -338,54 +340,55 @@ HNSW (Hierarchical Navigable Small World) is a graph-based approximate nearest n
 - **Search time**: O(log(n)) average
 - **Memory**: O(n * M) for connections + O(n * d * sizeof(Scalar)) for vectors
 
-The Swift backend follows the same graph model with Swift-native storage: level 0 uses direct fixed-width neighbor slots keyed by internal ID, upper levels use compact fixed slots, and internal graph IDs are stored as `UInt32`.
+The production index follows the same graph model: level 0 uses direct fixed-width neighbor slots keyed by internal ID, upper levels use compact fixed slots, and internal graph IDs are stored as `UInt32`.
 
-## C++ Reference Benchmark
+## hnswlib Reference Benchmark
 
-hnswlib is retained under `Benchmarks/CxxBackendComparison` to compare the Swift production backend against a native C++ reference. It is not a product dependency and is not compiled by `swift build` or `swift test` at the package root.
+hnswlib is retained under `Benchmarks/HNSWReferenceComparison` to compare the production index against the reference library. It is not a product dependency and is not compiled by root-package builds or tests.
 
 ## Thread Safety
 
 `HNSWIndex` is thread-safe with the following guarantees:
 
-- **Swift backend**: State access is serialized with `Mutex`
-- **C++ reference**: Used only by the benchmark package
+- **Production index**: State access is serialized with `Mutex`
+- **hnswlib reference**: Used only by the benchmark package
 - **Sendable**: Safe to use across actor boundaries
 
 ```swift
 // Concurrent search example
-await withTaskGroup(of: [SearchResult].self) { group in
+let resultBatches = try await withThrowingTaskGroup(of: [SearchResult].self) { group in
     for query in queries {
         group.addTask {
-            try! index.search(query, k: 10)
+            try index.search(query, k: 10)
         }
     }
+    return try await group.reduce(into: []) { $0.append($1) }
 }
 ```
 
-## Reference Backend Benchmarks
+## Reference Index Benchmarks
 
 **Measurement methodology:**
 
 - **Platform**: Apple Silicon (arm64), macOS 26.5.1
 - **Swift**: 6.3.1 (`swift-6.3.1-RELEASE`)
-- **Build**: Release (`swift run -c release --package-path Benchmarks/CxxBackendComparison CxxBackendComparison`)
-- **Backends**: Swift production backend and hnswlib reference backend
+- **Build**: Release (`swift run -c release --package-path Benchmarks/HNSWReferenceComparison HNSWReferenceComparison`)
+- **Indexes**: Production HNSW index and hnswlib reference index
 - **Data**: Random vectors sampled uniformly from [-1, 1]
 - **Ground truth**: Brute-force exact L2 search
 - **Recall@k**: Fraction of true k-nearest neighbors found in the approximate result
 - **QPS**: Queries per second (single-threaded, excluding index construction)
 - **Timing**: `ContinuousClock`, median and p95 over repeated full-query batches
 
-Run backend parity measurements with median and p95 search latency output:
+Run reference-comparison measurements with median and p95 search latency output:
 
 ```bash
-BACKEND_COMPARISON_ITERATIONS=3 swift run -c release --package-path Benchmarks/CxxBackendComparison CxxBackendComparison
+REFERENCE_COMPARISON_ITERATIONS=3 swift run -c release --package-path Benchmarks/HNSWReferenceComparison HNSWReferenceComparison
 ```
 
 ### Swift vs C++ Reference Results
 
-The production Swift backend is within the target parity threshold and was faster than the hnswlib reference in these search measurements. Positive values in `Swift vs C++` mean Swift is faster.
+The production index is within the target parity threshold and was faster than the hnswlib reference in these search measurements. Positive values in `Production vs reference` mean the production index is faster.
 
 | Scalar | Case | efSearch | Swift latency | C++ latency | Swift vs C++ | Swift recall@10 | C++ recall@10 |
 |--------|------|---------:|--------------:|------------:|-------------:|----------------:|--------------:|
@@ -405,15 +408,15 @@ Build throughput:
 | Float32 | 50k x 128 | 4,695 vectors/s | 4,519 vectors/s | 3.9% faster |
 | Float16 | 10k x 128 | 8,310 vectors/s | 7,945 vectors/s | 4.6% faster |
 
-The C++ reference remains useful as a regression comparison target, but it is not part of the production package graph.
+The hnswlib reference remains useful as a regression comparison target, but it is not part of the production package graph.
 
-Run the Swift backend performance smoke tests with:
+Run the production index performance smoke tests with:
 
 ```bash
-SWIFT_BACKEND_PERF=1 swift test
+HNSW_PERFORMANCE_TESTS=1 xcodebuild test -scheme swift-hnsw -destination 'platform=macOS'
 ```
 
-### Swift Backend Recall vs QPS Trade-off (128-dim, 10K vectors)
+### Production Index Recall vs QPS Trade-off (128-dim, 10K vectors)
 
 | efSearch | Recall@10 | QPS | Latency |
 |----------|-----------|-----|---------|
@@ -424,7 +427,7 @@ SWIFT_BACKEND_PERF=1 swift test
 | 160 | 92.7% | 9,839 | 0.102ms |
 | 320 | 98.1% | 5,544 | 0.180ms |
 
-### Swift Backend Scale Performance (128-dim, M=16, efConstruction=200, efSearch=100)
+### Production Index Scale Performance (128-dim, M=16, efConstruction=200, efSearch=100)
 
 | Vectors | Build Time | Build Rate | Search QPS | Latency | Index Size |
 |---------|------------|------------|------------|---------|------------|
@@ -490,5 +493,5 @@ The C++ reference benchmark wraps [hnswlib](https://github.com/nmslib/hnswlib), 
 
 ## Acknowledgments
 
-- [hnswlib](https://github.com/nmslib/hnswlib) - C++ reference benchmark backend
+- [hnswlib](https://github.com/nmslib/hnswlib) - reference benchmark index
 - [Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs](https://arxiv.org/abs/1603.09320) - Original HNSW paper

@@ -1,0 +1,4 @@
+module hnswlib {
+    header "hnswlib_reference.h"
+    export *
+}

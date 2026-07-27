@@ -1,6 +1,6 @@
 #if canImport(FoundationEssentials)
 import FoundationEssentials
-#else
+#elseif canImport(Foundation)
 import Foundation
 #endif
 
@@ -18,6 +18,7 @@ public enum HNSWError: Error, Sendable {
     case invalidArgument(String)
 }
 
+#if canImport(FoundationEssentials) || canImport(Foundation)
 extension HNSWError: LocalizedError {
     public var errorDescription: String? {
         switch self {
@@ -44,6 +45,7 @@ extension HNSWError: LocalizedError {
         }
     }
 }
+#endif
 
 extension HNSWError: Equatable {
     public static func == (lhs: HNSWError, rhs: HNSWError) -> Bool {
