@@ -277,12 +277,12 @@ struct Float16Tests {
         }
 
         // Serialize
-        let data = try index.serialize()
-        #expect(data.count > 0)
+        let archive = try index.serializedArchive()
+        #expect(archive.bytes.count > 0)
 
         // Load
-        let loaded = try HNSWIndex<Float16>.load(
-            from: data,
+        let loaded = try HNSWIndex<Float16>.restore(
+            from: archive,
             dimensions: 64,
             metric: .l2
         )

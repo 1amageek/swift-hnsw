@@ -457,9 +457,14 @@ extension HNSWIndex {
     public func save(to path: String) throws {
         do {
 #if os(WASI)
-            try serialize().write(to: URL(fileURLWithPath: path))
+            try Data(serializedArchive().bytes).write(
+                to: URL(fileURLWithPath: path)
+            )
 #else
-            try serialize().write(to: URL(fileURLWithPath: path), options: .atomic)
+            try Data(serializedArchive().bytes).write(
+                to: URL(fileURLWithPath: path),
+                options: .atomic
+            )
 #endif
         } catch {
             throw HNSWError.saveFailed("Failed to save index to \(path)")
@@ -483,7 +488,12 @@ extension HNSWIndex {
     ) throws -> HNSWIndex {
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
-            return try load(from: data, dimensions: dimensions, metric: metric, maxElements: maxElements)
+            return try restore(
+                from: data,
+                dimensions: dimensions,
+                metric: metric,
+                maxElements: maxElements
+            )
         } catch let error as HNSWError {
             throw error
         } catch {
@@ -491,6 +501,8 @@ extension HNSWIndex {
         }
     }
 }
+
+extension Data: HNSWArchiveBytes {}
 #endif
 
 extension HNSWIndex {
@@ -597,10 +609,9 @@ extension HNSWIndex {
     }
 }
 
-#if canImport(FoundationEssentials) || canImport(Foundation)
 extension HNSWIndex {
 
-    public func serialize() throws -> Data {
+    public func serializedArchive() throws -> HNSWArchive {
         state.withLock {
             var writer = HNSWArchiveWriter()
             writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
@@ -648,39 +659,41 @@ extension HNSWIndex {
                     }
                 }
             }
-            return writer.data
+            return HNSWArchive(bytes: writer.bytes)
         }
     }
 
-    public static func load(
-        from data: Data,
+    public static func restore<Archive: HNSWArchiveBytes>(
+        from archive: borrowing Archive,
         dimensions: Int,
         metric: DistanceMetric = .l2,
         maxElements: Int = 0
     ) throws -> HNSWIndex {
         do {
-            var reader = HNSWArchiveReader(data: data)
-            let magic = try reader.readMagic()
-            let version = try reader.readUInt32()
-            switch magic {
-            case HNSWArchiveReader.graphMagic:
-                return try loadGraph(
-                    reader: &reader,
-                    version: version,
-                    dimensions: dimensions,
-                    metric: metric,
-                    maxElements: maxElements
-                )
-            case HNSWArchiveReader.flatMagic:
-                return try loadFlat(
-                    reader: &reader,
-                    version: version,
-                    dimensions: dimensions,
-                    metric: metric,
-                    maxElements: maxElements
-                )
-            default:
-                throw HNSWError.loadFailed("Invalid HNSW index archive magic")
+            return try archive.withUnsafeBytes { bytes in
+                var reader = HNSWArchiveReader(bytes: bytes)
+                let magic = try reader.readMagic()
+                let version = try reader.readUInt32()
+                switch magic {
+                case HNSWArchiveReader.graphMagic:
+                    return try loadGraph(
+                        reader: &reader,
+                        version: version,
+                        dimensions: dimensions,
+                        metric: metric,
+                        maxElements: maxElements
+                    )
+                case HNSWArchiveReader.flatMagic:
+                    return try loadFlat(
+                        reader: &reader,
+                        version: version,
+                        dimensions: dimensions,
+                        metric: metric,
+                        maxElements: maxElements
+                    )
+                default:
+                    throw HNSWError.loadFailed("Invalid HNSW index archive magic")
+                }
             }
         } catch let error as HNSWError {
             throw error
@@ -1035,7 +1048,6 @@ extension HNSWIndex {
         return index
     }
 }
-#endif
 
 extension HNSWIndex {
 
@@ -2701,12 +2713,11 @@ extension HNSWIndex {
     }
 }
 
-#if canImport(FoundationEssentials) || canImport(Foundation)
 private struct HNSWArchiveWriter {
-    var data = Data()
+    var bytes: [UInt8] = []
 
     mutating func writeBytes(_ bytes: [UInt8]) {
-        data.append(contentsOf: bytes)
+        self.bytes.append(contentsOf: bytes)
     }
 
     mutating func writeBool(_ value: Bool) {
@@ -2741,7 +2752,7 @@ private struct HNSWArchiveWriter {
 
     mutating func writeString(_ value: String) {
         writeUInt32(UInt32(value.utf8.count))
-        data.append(contentsOf: value.utf8)
+        bytes.append(contentsOf: value.utf8)
     }
 }
 
@@ -2749,7 +2760,7 @@ private struct HNSWArchiveReader {
     static let flatMagic: UInt64 = 0x414C_4657_534E_4853
     static let graphMagic: UInt64 = 0x4652_4757_534E_4853
 
-    let data: Data
+    let bytes: UnsafeRawBufferPointer
     var offset = 0
 
     mutating func readMagic() throws -> UInt64 {
@@ -2758,17 +2769,17 @@ private struct HNSWArchiveReader {
     }
 
     mutating func readByte() throws -> UInt8 {
-        guard offset < data.count else {
+        guard offset < bytes.count else {
             throw HNSWError.loadFailed("Flat index data is truncated")
         }
         defer { offset += 1 }
-        return data.withUnsafeBytes { buffer in
-            buffer.loadUnaligned(fromByteOffset: offset, as: UInt8.self)
-        }
+        return bytes.loadUnaligned(fromByteOffset: offset, as: UInt8.self)
     }
 
     mutating func skipBytes(count: Int) throws {
-        guard count >= 0, offset + count <= data.count else {
+        guard count >= 0,
+              bytes.count >= count,
+              offset <= bytes.count - count else {
             throw HNSWError.loadFailed("Flat index data is truncated")
         }
         offset += count
@@ -2783,23 +2794,29 @@ private struct HNSWArchiveReader {
     }
 
     mutating func readUInt32() throws -> UInt32 {
-        guard offset + 4 <= data.count else {
+        guard bytes.count >= 4, offset <= bytes.count - 4 else {
             throw HNSWError.loadFailed("Flat index data is truncated")
         }
         defer { offset += 4 }
-        return data.withUnsafeBytes { buffer in
-            UInt32(littleEndian: buffer.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
-        }
+        return UInt32(
+            littleEndian: bytes.loadUnaligned(
+                fromByteOffset: offset,
+                as: UInt32.self
+            )
+        )
     }
 
     mutating func readUInt64() throws -> UInt64 {
-        guard offset + 8 <= data.count else {
+        guard bytes.count >= 8, offset <= bytes.count - 8 else {
             throw HNSWError.loadFailed("Flat index data is truncated")
         }
         defer { offset += 8 }
-        return data.withUnsafeBytes { buffer in
-            UInt64(littleEndian: buffer.loadUnaligned(fromByteOffset: offset, as: UInt64.self))
-        }
+        return UInt64(
+            littleEndian: bytes.loadUnaligned(
+                fromByteOffset: offset,
+                as: UInt64.self
+            )
+        )
     }
 
     mutating func readFloat() throws -> Float {
@@ -2808,24 +2825,26 @@ private struct HNSWArchiveReader {
 
     mutating func readString() throws -> String {
         let count = Int(try readUInt32())
-        guard count >= 0, offset + count <= data.count else {
+        guard count >= 0,
+              bytes.count >= count,
+              offset <= bytes.count - count else {
             throw HNSWError.loadFailed("Flat index data is truncated")
         }
         defer { offset += count }
-        return data.withUnsafeBytes { buffer in
-            let start = buffer.baseAddress!.advanced(by: offset).assumingMemoryBound(to: UInt8.self)
-            let bytes = UnsafeBufferPointer(start: start, count: count)
-            return String(decoding: bytes, as: UTF8.self)
-        }
+        let start = bytes.baseAddress!.advanced(by: offset)
+            .assumingMemoryBound(to: UInt8.self)
+        return String(
+            decoding: UnsafeBufferPointer(start: start, count: count),
+            as: UTF8.self
+        )
     }
 
     func ensureFullyRead() throws {
-        guard offset == data.count else {
+        guard offset == bytes.count else {
             throw HNSWError.loadFailed("Flat index data has trailing bytes")
         }
     }
 }
-#endif
 
 
 // MARK: - Type Aliases for Convenience

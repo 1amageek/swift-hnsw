@@ -283,7 +283,22 @@ try index.unmarkDeleted(label: 0)
 
 ### Persistence
 
-Persistence APIs are available when FoundationEssentials or Foundation is present. Foundation-free Embedded targets provide the in-memory index and search APIs without file or `Data` archive APIs.
+Canonical in-memory archives are available on every target, including
+Foundation-free Embedded builds. `HNSWArchive` owns contiguous bytes, while
+`HNSWArchiveBytes` lets a caller restore directly from its own retained
+contiguous storage without first creating `Data`.
+
+```swift
+let archive = try index.serializedArchive()
+let restored = try HNSWIndex<Float>.restore(
+    from: archive,
+    dimensions: 128,
+    metric: .l2
+)
+```
+
+File persistence adapters are additionally available when
+FoundationEssentials or Foundation is present.
 
 ```swift
 // Save index

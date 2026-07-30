@@ -115,8 +115,12 @@ struct HNSWIndexContractTests {
         let batchResults = try index.searchBatch([[0, 0], [2, 2]], k: 2)
         #expect(batchResults.map { $0.first?.label } == [100, 103])
 
-        let data = try index.serialize()
-        let loaded = try HNSWIndex<Float>.load(from: data, dimensions: 2, metric: .l2)
+        let archive = try index.serializedArchive()
+        let loaded = try HNSWIndex<Float>.restore(
+            from: archive,
+            dimensions: 2,
+            metric: .l2
+        )
 
         #expect(loaded.count == 4)
         #expect(loaded.allLabels == [100, 101, 102, 103])
@@ -167,8 +171,12 @@ struct HNSWIndexContractTests {
         #expect(storageCounts.singlePrecision == 0)
         #expect(storageCounts.halfPrecision == 4)
 
-        let data = try index.serialize()
-        let loaded = try HNSWIndex<Float16>.load(from: data, dimensions: 2, metric: .cosine)
+        let archive = try index.serializedArchive()
+        let loaded = try HNSWIndex<Float16>.restore(
+            from: archive,
+            dimensions: 2,
+            metric: .cosine
+        )
         let loadedStorageCounts = loaded.comparisonValueCounts
 
         #expect(loadedStorageCounts.singlePrecision == 0)
@@ -351,7 +359,11 @@ struct HNSWIndexContractTests {
         let payload = invalidGraphPayloadWithSelfEdge()
 
         #expect(throws: HNSWError.self) {
-            _ = try HNSWIndex<Float>.load(from: payload, dimensions: 1, metric: .l2)
+            _ = try HNSWIndex<Float>.restore(
+                from: payload,
+                dimensions: 1,
+                metric: .l2
+            )
         }
     }
 
@@ -360,7 +372,11 @@ struct HNSWIndexContractTests {
         let payload = invalidGraphPayloadWithInvalidNeighborID()
 
         #expect(throws: HNSWError.self) {
-            _ = try HNSWIndex<Float>.load(from: payload, dimensions: 1, metric: .l2)
+            _ = try HNSWIndex<Float>.restore(
+                from: payload,
+                dimensions: 1,
+                metric: .l2
+            )
         }
     }
 }
