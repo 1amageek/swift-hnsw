@@ -106,36 +106,6 @@ public final class TurboQuantIndex: Sendable {
         )
     }
 
-    /// Creates a benchmark-configured Product index without adding an application-facing
-    /// algorithm switch. The SPI is used only by the repository benchmark target.
-    @_spi(Benchmarking)
-    public convenience init(
-        dimensions: Int,
-        maxElements: Int,
-        bitWidth: Int = 4,
-        objective: TurboQuantObjective = .meanSquaredError,
-        rotationStrategy: TurboQuantRotationStrategy = .structuredHadamard,
-        configuration: HNSWConfiguration = .balanced,
-        seed: UInt64 = 42,
-        qjlDistancePruningEnabled: Bool,
-        collectQJLPruningStatistics: Bool = false
-    ) throws {
-        try self.init(
-            dimensions: dimensions,
-            maxElements: maxElements,
-            bitWidth: bitWidth,
-            objective: objective,
-            rotationStrategy: rotationStrategy,
-            configuration: configuration,
-            seed: seed,
-            acceleratedFourBitKernelAvailable:
-                ScalarQuantizer.hasAcceleratedFourBitKernel,
-            qjlPruningMode: qjlDistancePruningEnabled ? .always : .never,
-            collectQJLPruningStatistics: collectQJLPruningStatistics,
-            createsBuilder: true
-        )
-    }
-
     /// Creates a benchmark-configured Product index with an explicit pruning policy.
     @_spi(Benchmarking)
     public convenience init(
@@ -174,7 +144,7 @@ public final class TurboQuantIndex: Sendable {
         configuration: HNSWConfiguration,
         seed: UInt64,
         acceleratedFourBitKernelAvailable: Bool,
-        qjlDistancePruningEnabled: Bool = true,
+        qjlPruningMode: TurboQuantQJLPruningMode = .automatic,
         collectQJLPruningStatistics: Bool = false
     ) throws {
         try self.init(
@@ -187,7 +157,7 @@ public final class TurboQuantIndex: Sendable {
             seed: seed,
             acceleratedFourBitKernelAvailable:
                 acceleratedFourBitKernelAvailable,
-            qjlPruningMode: qjlDistancePruningEnabled ? .always : .never,
+            qjlPruningMode: qjlPruningMode,
             collectQJLPruningStatistics: collectQJLPruningStatistics,
             createsBuilder: true
         )

@@ -88,14 +88,14 @@ struct BenchmarkRunner {
         ]
         let qjlPruningModeName = environment[
             "TURBOQUANT_QJL_PRUNING"
-        ] ?? "enabled"
+        ] ?? "automatic"
         let qjlPruningMode: TurboQuantQJLPruningMode
         let collectQJLPruningStatistics: Bool
         switch qjlPruningModeName {
-        case "enabled", "automatic":
+        case "automatic":
             qjlPruningMode = .automatic
             collectQJLPruningStatistics = false
-        case "enabled-stats", "automatic-stats":
+        case "automatic-stats":
             qjlPruningMode = .automatic
             collectQJLPruningStatistics = true
         case "always":
@@ -104,10 +104,10 @@ struct BenchmarkRunner {
         case "always-stats":
             qjlPruningMode = .always
             collectQJLPruningStatistics = true
-        case "disabled", "never":
+        case "never":
             qjlPruningMode = .never
             collectQJLPruningStatistics = false
-        case "disabled-stats", "never-stats":
+        case "never-stats":
             qjlPruningMode = .never
             collectQJLPruningStatistics = true
         default:
