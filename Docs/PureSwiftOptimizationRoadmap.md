@@ -72,10 +72,10 @@ Measured search latency and build throughput were faster than the hnswlib refere
 - Reference comparison benchmarks record median and p95 search latency across repeated search iterations.
 - Serialization still writes the existing graph format for compatibility.
 - TurboQuant QJL lookup reduction remains pure Swift. Its hot loop borrows
-  packed signs and the lookup table through `UnsafeBufferPointer`, loads four
-  sign bytes with a bounded unaligned `UInt32` read, and keeps the four
-  Float32 accumulators in Swift. The pointer does not escape the synchronous
-  borrow; ASan and TSan cover the active path.
+  packed signs and the lookup table through `UnsafeBufferPointer`, loads eight
+  sign bytes with a bounded unaligned `UInt64` read (with a four-byte fallback),
+  and keeps the four Float32 accumulators in Swift. The pointer does not escape
+  the synchronous borrow; ASan and TSan cover the active path.
 
 ## Decision Benchmark Snapshot
 
@@ -95,3 +95,14 @@ whole-search speedup, while the bounded Swift word load preserves the same
 Float32 reduction order and works on Native, regular WASM, and Embedded WASM.
 The release gate therefore accepts the pure Swift path and records the
 benchmark limitation that end-to-end HNSW speed is workload-dependent.
+
+## Patch follow-up — 2026-08-01
+
+The QJL hot loop now loads eight initialized sign bytes with a bounded
+unaligned `UInt64` read and retains a four-byte `UInt32` fallback for the
+remaining groups. The differential test covers eight-byte groups, the fallback,
+and tails after an eight-byte group. Three paired d=768 cycles produced median
+CPU-QPS ratios from 1.027x to 1.071x for `efSearch` 20 through 400; d=128
+remained positive or neutral, with identical Recall@10 and checksums. The
+archive representation is unchanged, so this candidate is a 1.1.1 patch
+update rather than a format migration.

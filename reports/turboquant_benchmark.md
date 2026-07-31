@@ -108,11 +108,11 @@ and `source_state=clean` in
 
 ## Pure Swift unsafe QJL reduction verification
 
-The release candidate keeps the QJL lookup reduction in pure Swift. It borrows
+The 1.1.0 release candidate kept the QJL lookup reduction in pure Swift. It borrows
 the packed sign and Float32 table buffers with `UnsafeBufferPointer`, validates
-the table-size multiplication, and uses one unaligned `UInt32` load for each
-four-byte group before the same four-accumulator Float32 reduction. The load is
-bounded by the loop condition and the pointer never escapes the synchronous
+the table-size multiplication, and used one unaligned `UInt32` load for each
+four-byte group before the same four-accumulator Float32 reduction. The load
+was bounded by the loop condition and the pointer never escaped the synchronous
 borrow. There is no QJL C symbol or C module boundary.
 
 Three concurrent paired d=768 cycles against the previous pure-Swift byte-load
@@ -124,6 +124,16 @@ at low search effort but do not establish a universal whole-search speedup;
 graph traversal and heap work dominate at larger `efSearch`. The complete
 methodology and the d=128 control are recorded in
 [`benchmark-artifacts/2026-07-31-qjl-pure-swift-unsafe`](benchmark-artifacts/2026-07-31-qjl-pure-swift-unsafe/README.md).
+
+## Eight-byte pure Swift QJL follow-up (1.1.1 candidate)
+
+After 1.1.0, the QJL loop was measured with a bounded unaligned `UInt64`
+load for eight sign bytes, retaining the same four-accumulator Float32 order.
+The paired d=768 medians were 0.995x, 1.071x, 1.050x, 1.052x, 1.034x,
+1.059x, and 1.027x for `efSearch` 10 through 400. Recall and checksums were
+identical; the d=128 control also remained positive or neutral. The complete
+paired logs and interpretation are recorded in
+[`benchmark-artifacts/2026-08-01-qjl-8byte-unsafe`](benchmark-artifacts/2026-08-01-qjl-8byte-unsafe/README.md).
 
 ## 10,000 Vectors, 768 Dimensions
 

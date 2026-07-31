@@ -459,7 +459,7 @@ struct TurboQuantProductEstimatorTests {
 
     @Test(
         "QJL platform lookup preserves Swift reduction order",
-        arguments: [0, 1, 2, 3, 4, 5, 16, 63, 64, 65, 96, 97, 128, 1_024]
+        arguments: [0, 1, 2, 3, 4, 5, 8, 9, 15, 16, 63, 64, 65, 96, 97, 128, 1_024]
     )
     func qjlPlatformLookupPreservesSwiftReductionOrder(packedSize: Int) {
         let signs = (0..<packedSize).map { byte in

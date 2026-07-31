@@ -211,10 +211,34 @@ struct QJLProjection: Sendable {
         var accumulator1: Float = 0
         var accumulator2: Float = 0
         var accumulator3: Float = 0
+        while byteIndex + 8 <= signs.count {
+            let row = tableBase.advanced(by: byteIndex * lookupEntriesPerByte)
+            // The loop bound proves eight initialized sign bytes are available. The
+            // unaligned load avoids imposing an alignment requirement on `[UInt8]`.
+            let packedBytes = UInt64(littleEndian: UnsafeRawPointer(
+                signsBase.advanced(by: byteIndex)
+            ).loadUnaligned(as: UInt64.self))
+            let byte0 = UInt8(truncatingIfNeeded: packedBytes)
+            let byte1 = UInt8(truncatingIfNeeded: packedBytes >> 8)
+            let byte2 = UInt8(truncatingIfNeeded: packedBytes >> 16)
+            let byte3 = UInt8(truncatingIfNeeded: packedBytes >> 24)
+            let byte4 = UInt8(truncatingIfNeeded: packedBytes >> 32)
+            let byte5 = UInt8(truncatingIfNeeded: packedBytes >> 40)
+            let byte6 = UInt8(truncatingIfNeeded: packedBytes >> 48)
+            let byte7 = UInt8(truncatingIfNeeded: packedBytes >> 56)
+            accumulator0 += row[Int(byte0 >> 4)] + row[16 + Int(byte0 & 0x0F)]
+            accumulator1 += row[32 + Int(byte1 >> 4)] + row[48 + Int(byte1 & 0x0F)]
+            accumulator2 += row[64 + Int(byte2 >> 4)] + row[80 + Int(byte2 & 0x0F)]
+            accumulator3 += row[96 + Int(byte3 >> 4)] + row[112 + Int(byte3 & 0x0F)]
+            let nextRow = row.advanced(by: 4 * lookupEntriesPerByte)
+            accumulator0 += nextRow[Int(byte4 >> 4)] + nextRow[16 + Int(byte4 & 0x0F)]
+            accumulator1 += nextRow[32 + Int(byte5 >> 4)] + nextRow[48 + Int(byte5 & 0x0F)]
+            accumulator2 += nextRow[64 + Int(byte6 >> 4)] + nextRow[80 + Int(byte6 & 0x0F)]
+            accumulator3 += nextRow[96 + Int(byte7 >> 4)] + nextRow[112 + Int(byte7 & 0x0F)]
+            byteIndex += 8
+        }
         while byteIndex + 4 <= signs.count {
             let row = tableBase.advanced(by: byteIndex * lookupEntriesPerByte)
-            // The loop bound proves four initialized sign bytes are available. The
-            // unaligned load avoids imposing an alignment requirement on `[UInt8]`.
             let packedBytes = UInt32(littleEndian: UnsafeRawPointer(
                 signsBase.advanced(by: byteIndex)
             ).loadUnaligned(as: UInt32.self))
