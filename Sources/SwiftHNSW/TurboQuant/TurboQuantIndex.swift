@@ -79,8 +79,7 @@ public final class TurboQuantIndex: Sendable {
     private static let maximumSerializedLevelCount = 64
     private static let maximumRetainedWorkspaceBytes = 256 * 1_024 * 1_024
     private static let maximumPackedLookupBytes = 64 * 1_024 * 1_024
-    // QJL pruning is worthwhile only after the search frontier is large enough
-    // to amortize the conservative-bound check over the additional candidates.
+    // The calibrated automatic policy enables QJL pruning at this search effort.
     private static let minimumQJLPruningEFSearch = 100
 
     public convenience init(

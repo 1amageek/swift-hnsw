@@ -190,8 +190,8 @@ The non-NEON path remains functional and uses the coordinate/packed lookup
 implementation. Capability selection is explicit; an unsupported platform
 does not silently execute the ARM64 kernel. Product 5-bit still performs its
 QJL projection and residual estimate. The production initializer uses an
-automatic pruning policy: the conservative QJL bound is enabled at
-`efSearch >= 100`, where the larger frontier amortizes its check. Benchmark
+automatic pruning policy: the conservative QJL bound is enabled at the
+calibrated `efSearch >= 100` boundary. Benchmark
 SPI exposes `automatic`, `always`, and `never` policies so the threshold can be
 measured without changing the application API. Counters are also SPI-only and
 remain outside the production surface.
