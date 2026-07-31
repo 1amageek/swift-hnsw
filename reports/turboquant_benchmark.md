@@ -189,17 +189,61 @@ FMA chains. Odd and non-multiple-of-sixteen dimensions use a scalar tail.
 The non-NEON path remains functional and uses the coordinate/packed lookup
 implementation. Capability selection is explicit; an unsupported platform
 does not silently execute the ARM64 kernel. Product 5-bit still performs its
-QJL projection and residual estimate. The new pruning path is active in
-production search, but a separate pruning-count counter is intentionally not
-part of the public API; follow-up paired cycles are required before claiming a
-stable QJL latency improvement.
+QJL projection and residual estimate. The production initializer uses an
+automatic pruning policy: the conservative QJL bound is enabled at
+`efSearch >= 100`, where the larger frontier amortizes its check. Benchmark
+SPI exposes `automatic`, `always`, and `never` policies so the threshold can be
+measured without changing the application API. Counters are also SPI-only and
+remain outside the production surface.
+
+## Adaptive QJL pruning verification (`d8b1bc1`)
+
+The final implementation keeps one production policy and two benchmark controls:
+
+```mermaid
+flowchart LR
+    A["Product search"] --> B{"QJL policy"}
+    B -->|automatic, ef < 100| C["Evaluate QJL normally"]
+    B -->|automatic, ef >= 100| D["MSE lower bound"]
+    B -->|always| D
+    B -->|never| E["QJL score without pruning"]
+    D -->|bound > retained distance| F["Skip QJL score"]
+    D -->|otherwise| G["Evaluate QJL score"]
+```
+
+The same deterministic 10,000-vector workload was run for both d=128 and
+d=768. Labels, distances, Recall@10, and checksums were identical across
+`automatic`, `always`, and `never`. `automatic` deliberately reports zero
+prunes for `efSearch` 10–60 and the measured pruning counts for 100–400:
+
+| Dimension | `efSearch` | QJL candidates | Automatic pruned | Automatic rate | Always rate |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 128 | 10 | 20,438 | 0 | 0.000 | 0.625 |
+| 128 | 20 | 33,503 | 0 | 0.000 | 0.589 |
+| 128 | 40 | 57,365 | 0 | 0.000 | 0.563 |
+| 128 | 60 | 77,124 | 0 | 0.000 | 0.547 |
+| 128 | 100 | 112,892 | 59,500 | 0.527 | 0.527 |
+| 128 | 200 | 189,063 | 95,929 | 0.507 | 0.507 |
+| 128 | 400 | 294,187 | 141,318 | 0.480 | 0.480 |
+| 768 | 10 | 21,884 | 0 | 0.000 | 0.242 |
+| 768 | 20 | 36,352 | 0 | 0.000 | 0.211 |
+| 768 | 40 | 62,035 | 0 | 0.000 | 0.190 |
+| 768 | 60 | 84,233 | 0 | 0.000 | 0.176 |
+| 768 | 100 | 125,330 | 20,441 | 0.163 | 0.163 |
+| 768 | 200 | 203,195 | 29,261 | 0.144 | 0.144 |
+| 768 | 400 | 315,463 | 38,070 | 0.121 | 0.121 |
+
+These are activation and correctness measurements, not a pooled speed claim:
+the policy runs were executed sequentially while system load varied. The raw
+policy summaries are stored in
+[`benchmark-artifacts/2026-07-31-qjl-policy`](benchmark-artifacts/2026-07-31-qjl-policy/README.md).
 
 ## Verification
 
 | Verification | Result |
 | --- | --- |
-| Native package tests | 133 concrete test cases passed, 0 failed; 12 benchmark cases skipped |
-| Address Sanitizer | 10 final-source quantizer, ARM64 kernel, and forced-fallback tests passed |
+| Native package tests | 114 tests in 13 suites passed, 0 failed; benchmark cases skipped |
+| Address Sanitizer | Final policy-boundary Product test passed (1 test) |
 | Thread Sanitizer | 12 contract tests, including concurrent search, passed; no race reported |
 | Undefined Behavior Sanitizer | 10 quantizer/kernel/fallback tests passed after explicitly linking the snapshot runtime |
 | Regular WASM final-source build | Compile and link passed |

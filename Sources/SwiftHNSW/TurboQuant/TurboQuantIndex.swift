@@ -71,7 +71,7 @@ public final class TurboQuantIndex: Sendable {
     private let qjlPackedSize: Int
     private let _packedSize: Int
     private let usesAcceleratedFourBitKernel: Bool
-    private let usesQJLDistancePruning: Bool
+    private let qjlPruningMode: TurboQuantQJLPruningMode
     private let qjlScale: Float
     private let maximumResidualNorm: Float
     private let maximumElementCount: Int
@@ -102,7 +102,7 @@ public final class TurboQuantIndex: Sendable {
             seed: seed,
             acceleratedFourBitKernelAvailable:
                 ScalarQuantizer.hasAcceleratedFourBitKernel,
-            qjlDistancePruningEnabled: true,
+            qjlPruningMode: .automatic,
             createsBuilder: true
         )
     }
@@ -131,7 +131,36 @@ public final class TurboQuantIndex: Sendable {
             seed: seed,
             acceleratedFourBitKernelAvailable:
                 ScalarQuantizer.hasAcceleratedFourBitKernel,
-            qjlDistancePruningEnabled: qjlDistancePruningEnabled,
+            qjlPruningMode: qjlDistancePruningEnabled ? .always : .never,
+            collectQJLPruningStatistics: collectQJLPruningStatistics,
+            createsBuilder: true
+        )
+    }
+
+    /// Creates a benchmark-configured Product index with an explicit pruning policy.
+    @_spi(Benchmarking)
+    public convenience init(
+        dimensions: Int,
+        maxElements: Int,
+        bitWidth: Int = 4,
+        objective: TurboQuantObjective = .meanSquaredError,
+        rotationStrategy: TurboQuantRotationStrategy = .structuredHadamard,
+        configuration: HNSWConfiguration = .balanced,
+        seed: UInt64 = 42,
+        qjlPruningMode: TurboQuantQJLPruningMode,
+        collectQJLPruningStatistics: Bool = false
+    ) throws {
+        try self.init(
+            dimensions: dimensions,
+            maxElements: maxElements,
+            bitWidth: bitWidth,
+            objective: objective,
+            rotationStrategy: rotationStrategy,
+            configuration: configuration,
+            seed: seed,
+            acceleratedFourBitKernelAvailable:
+                ScalarQuantizer.hasAcceleratedFourBitKernel,
+            qjlPruningMode: qjlPruningMode,
             collectQJLPruningStatistics: collectQJLPruningStatistics,
             createsBuilder: true
         )
@@ -159,7 +188,7 @@ public final class TurboQuantIndex: Sendable {
             seed: seed,
             acceleratedFourBitKernelAvailable:
                 acceleratedFourBitKernelAvailable,
-            qjlDistancePruningEnabled: qjlDistancePruningEnabled,
+            qjlPruningMode: qjlDistancePruningEnabled ? .always : .never,
             collectQJLPruningStatistics: collectQJLPruningStatistics,
             createsBuilder: true
         )
@@ -174,7 +203,7 @@ public final class TurboQuantIndex: Sendable {
         configuration: HNSWConfiguration,
         seed: UInt64,
         acceleratedFourBitKernelAvailable: Bool,
-        qjlDistancePruningEnabled: Bool,
+        qjlPruningMode: TurboQuantQJLPruningMode,
         collectQJLPruningStatistics: Bool = false,
         createsBuilder: Bool
     ) throws {
@@ -351,7 +380,7 @@ public final class TurboQuantIndex: Sendable {
         self.qjlPackedSize = qjlPackedSize
         self._packedSize = packedSize
         self.usesAcceleratedFourBitKernel = usesAcceleratedFourBitKernel
-        self.usesQJLDistancePruning = qjlDistancePruningEnabled
+        self.qjlPruningMode = qjlPruningMode
         self.qjlScale = objective == .innerProduct
             ? Float(1.253_314_137_315_500_3) / Float(dimensions)
             : 0
@@ -880,8 +909,10 @@ public final class TurboQuantIndex: Sendable {
         visitedTag: inout UInt16,
         searchWorkspace: inout HNSWSearchWorkspace
     ) -> [SearchResult] {
-        let qjlPruningEnabled = usesQJLDistancePruning
-            && efSearch >= Self.minimumQJLPruningEFSearch
+        let qjlPruningEnabled = Self.shouldEnableQJLPruning(
+            mode: qjlPruningMode,
+            efSearch: efSearch
+        )
         var current = entryPoint
         guard let initialDistance = searchDistance(
             to: current,
@@ -1033,6 +1064,20 @@ public final class TurboQuantIndex: Sendable {
                 }
                 return output
             }
+        }
+    }
+
+    private static func shouldEnableQJLPruning(
+        mode: TurboQuantQJLPruningMode,
+        efSearch: Int
+    ) -> Bool {
+        switch mode {
+        case .automatic:
+            return efSearch >= minimumQJLPruningEFSearch
+        case .always:
+            return true
+        case .never:
+            return false
         }
     }
 
@@ -1419,7 +1464,7 @@ extension TurboQuantIndex {
             seed: seed,
             acceleratedFourBitKernelAvailable:
                 ScalarQuantizer.hasAcceleratedFourBitKernel,
-            qjlDistancePruningEnabled: true,
+            qjlPruningMode: .automatic,
             createsBuilder: false
         )
         guard index.paddedDimensions == paddedDimensions,

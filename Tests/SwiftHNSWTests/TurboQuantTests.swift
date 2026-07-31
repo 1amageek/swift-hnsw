@@ -497,14 +497,15 @@ struct TurboQuantProductEstimatorTests {
     @Test("QJL distance pruning preserves product search results")
     func qjlDistancePruningPreservesResults() throws {
         let dimension = 32
-        let vectorCount = 64
+        let vectorCount = 256
         let configuration = HNSWConfiguration(
             m: 8,
             efConstruction: 32,
             efSearch: 100
         )
 
-        let makeIndex: (Bool) throws -> TurboQuantIndex = { pruningEnabled in
+        let makeIndex: (TurboQuantQJLPruningMode) throws -> TurboQuantIndex = {
+            pruningMode in
             let index = try TurboQuantIndex(
                 dimensions: dimension,
                 maxElements: vectorCount,
@@ -513,10 +514,8 @@ struct TurboQuantProductEstimatorTests {
                 rotationStrategy: .structuredHadamard,
                 configuration: configuration,
                 seed: 19,
-                acceleratedFourBitKernelAvailable:
-                    ScalarQuantizer.hasAcceleratedFourBitKernel,
-                qjlDistancePruningEnabled: pruningEnabled,
-                collectQJLPruningStatistics: pruningEnabled
+                qjlPruningMode: pruningMode,
+                collectQJLPruningStatistics: pruningMode != .never
             )
             for vectorIndex in 0..<vectorCount {
                 let vector = (0..<dimension).map { coordinate in
@@ -531,8 +530,8 @@ struct TurboQuantProductEstimatorTests {
         let query = (0..<dimension).map { coordinate in
             Float((coordinate * 13) % 31 - 15) / 17
         }
-        let reference = try makeIndex(false)
-        let optimized = try makeIndex(true)
+        let reference = try makeIndex(.never)
+        let optimized = try makeIndex(.automatic)
         let referenceResults = try reference.search(query, k: 10)
         optimized.resetQJLPruningStatistics()
         let optimizedResults = try optimized.search(query, k: 10)
@@ -546,10 +545,15 @@ struct TurboQuantProductEstimatorTests {
         #expect(statistics.prunedCandidates > 0)
         #expect(statistics.prunedCandidates < statistics.scoredCandidates)
 
-        try optimized.setEfSearch(31)
+        try optimized.setEfSearch(99)
         optimized.resetQJLPruningStatistics()
         _ = try optimized.search(query, k: 10)
         #expect(optimized.qjlPruningStatistics().prunedCandidates == 0)
+
+        try optimized.setEfSearch(100)
+        optimized.resetQJLPruningStatistics()
+        _ = try optimized.search(query, k: 10)
+        #expect(optimized.qjlPruningStatistics().prunedCandidates > 0)
     }
 
     @Test("TurboQuant product estimate is unbiased across projection seeds")

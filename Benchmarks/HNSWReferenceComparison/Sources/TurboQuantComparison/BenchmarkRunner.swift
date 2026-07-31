@@ -86,17 +86,35 @@ struct BenchmarkRunner {
         let requestedTarget = environment[
             "TURBOQUANT_BENCHMARK_TARGET"
         ]
-        let qjlPruningMode = environment[
+        let qjlPruningModeName = environment[
             "TURBOQUANT_QJL_PRUNING"
         ] ?? "enabled"
-        guard ["enabled", "disabled", "enabled-stats", "disabled-stats"]
-            .contains(qjlPruningMode) else {
+        let qjlPruningMode: TurboQuantQJLPruningMode
+        let collectQJLPruningStatistics: Bool
+        switch qjlPruningModeName {
+        case "enabled", "automatic":
+            qjlPruningMode = .automatic
+            collectQJLPruningStatistics = false
+        case "enabled-stats", "automatic-stats":
+            qjlPruningMode = .automatic
+            collectQJLPruningStatistics = true
+        case "always":
+            qjlPruningMode = .always
+            collectQJLPruningStatistics = false
+        case "always-stats":
+            qjlPruningMode = .always
+            collectQJLPruningStatistics = true
+        case "disabled", "never":
+            qjlPruningMode = .never
+            collectQJLPruningStatistics = false
+        case "disabled-stats", "never-stats":
+            qjlPruningMode = .never
+            collectQJLPruningStatistics = true
+        default:
             throw BenchmarkRunnerError.unsupportedTarget(
-                "TURBOQUANT_QJL_PRUNING=\(qjlPruningMode)"
+                "TURBOQUANT_QJL_PRUNING=\(qjlPruningModeName)"
             )
         }
-        let qjlPruningEnabled = qjlPruningMode.hasPrefix("enabled")
-        let collectQJLPruningStatistics = qjlPruningMode.hasSuffix("stats")
         if let requestedTarget,
            !supportedTargets.contains(requestedTarget) {
             throw BenchmarkRunnerError.unsupportedTarget(requestedTarget)
@@ -142,7 +160,7 @@ struct BenchmarkRunner {
             " target=\(requestedTarget ?? "all")"
         )
         print(
-            "turboquant_benchmark qjl_pruning=\(qjlPruningMode)"
+            "turboquant_benchmark qjl_pruning=\(qjlPruningModeName)"
         )
         let allCases = [
             BenchmarkCase(
@@ -190,6 +208,8 @@ struct BenchmarkRunner {
             ]
         } else if requestedCase == "d768" {
             selectedCases = allCases.filter { $0.dimensions == 768 }
+        } else if requestedCase == "d128" {
+            selectedCases = allCases.filter { $0.dimensions == 128 }
         } else {
             selectedCases = allCases
         }
@@ -197,7 +217,7 @@ struct BenchmarkRunner {
             try run(
                 benchmarkCase,
                 requestedTarget: requestedTarget,
-                qjlPruningEnabled: qjlPruningEnabled,
+                qjlPruningMode: qjlPruningMode,
                 collectQJLPruningStatistics: collectQJLPruningStatistics
             )
         }
@@ -206,7 +226,7 @@ struct BenchmarkRunner {
     private static func run(
         _ benchmarkCase: BenchmarkCase,
         requestedTarget: String?,
-        qjlPruningEnabled: Bool,
+        qjlPruningMode: TurboQuantQJLPruningMode,
         collectQJLPruningStatistics: Bool
     ) throws {
         print("")
@@ -302,7 +322,7 @@ struct BenchmarkRunner {
                         efConstruction: 200
                     ),
                     seed: 42,
-                    qjlDistancePruningEnabled: qjlPruningEnabled,
+                    qjlPruningMode: qjlPruningMode,
                     collectQJLPruningStatistics:
                         collectQJLPruningStatistics
                 )

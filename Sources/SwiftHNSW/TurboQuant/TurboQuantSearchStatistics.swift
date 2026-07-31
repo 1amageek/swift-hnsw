@@ -1,3 +1,11 @@
+/// Benchmark-only Product QJL pruning policy.
+@_spi(Benchmarking)
+public enum TurboQuantQJLPruningMode: Sendable {
+    case automatic
+    case always
+    case never
+}
+
 /// Benchmark-only counters for Product QJL candidate scoring.
 @_spi(Benchmarking)
 public struct TurboQuantQJLPruningStatistics: Sendable, Equatable {
