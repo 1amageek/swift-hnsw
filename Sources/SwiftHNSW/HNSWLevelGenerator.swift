@@ -40,3 +40,12 @@ func hnswNaturalLog(_ value: Double) -> Double {
     Foundation.log(value)
     #endif
 }
+
+@inline(__always)
+func hnswExponential(_ value: Double) -> Double {
+    #if os(WASI)
+    WASILibc.exp(value)
+    #else
+    Foundation.exp(value)
+    #endif
+}

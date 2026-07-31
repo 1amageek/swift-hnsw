@@ -1,0 +1,402 @@
+turboquant_benchmark toolchain_identifier=org.swift.64202607231a
+turboquant_benchmark compiler=Apple_Swift_version_6.4-dev_(LLVM_264fd65923c28d9,_Swift_ef761e567dc94ee)_Target:_arm64-apple-macosx27.0.0_Build_config:_+assertions
+turboquant_benchmark comparison=HNSW cosine vs TurboQuant MSE and product objectives
+turboquant_benchmark run_id=2026-07-31-d768-cycle3-hnsw
+turboquant_benchmark source_revision=a1f7ec0a847fd871a32af13b7c89a2e5b7ee67bd
+turboquant_benchmark source_state=dirty
+turboquant_benchmark measurement_mode=isolated target=hnsw-cosine
+
+case=n10k-d768 n=10000 d=768 q=50 k=10
+build index=hnsw-cosine ms=4408.276 retained_vector_bytes=30720000
+sample phase=batch index=hnsw-cosine bits=- ef=10 trial=0 wall_ms=2.944 cpu_ms=2.920 checksum=2142627
+sample phase=batch index=hnsw-cosine bits=- ef=10 trial=1 wall_ms=2.511 cpu_ms=2.508 checksum=2142628
+sample phase=batch index=hnsw-cosine bits=- ef=10 trial=2 wall_ms=2.124 cpu_ms=2.124 checksum=2142629
+sample phase=batch index=hnsw-cosine bits=- ef=10 trial=3 wall_ms=2.039 cpu_ms=2.040 checksum=2142630
+sample phase=batch index=hnsw-cosine bits=- ef=10 trial=4 wall_ms=1.950 cpu_ms=1.949 checksum=2142631
+sample phase=query index=hnsw-cosine bits=- ef=10 query=0 wall_ms=0.038 checksum=56209
+sample phase=query index=hnsw-cosine bits=- ef=10 query=1 wall_ms=0.028 checksum=44567
+sample phase=query index=hnsw-cosine bits=- ef=10 query=2 wall_ms=0.041 checksum=27138
+sample phase=query index=hnsw-cosine bits=- ef=10 query=3 wall_ms=0.042 checksum=38333
+sample phase=query index=hnsw-cosine bits=- ef=10 query=4 wall_ms=0.028 checksum=36466
+sample phase=query index=hnsw-cosine bits=- ef=10 query=5 wall_ms=0.037 checksum=61449
+sample phase=query index=hnsw-cosine bits=- ef=10 query=6 wall_ms=0.031 checksum=43548
+sample phase=query index=hnsw-cosine bits=- ef=10 query=7 wall_ms=0.049 checksum=32476
+sample phase=query index=hnsw-cosine bits=- ef=10 query=8 wall_ms=0.036 checksum=50715
+sample phase=query index=hnsw-cosine bits=- ef=10 query=9 wall_ms=0.033 checksum=38958
+sample phase=query index=hnsw-cosine bits=- ef=10 query=10 wall_ms=0.050 checksum=23153
+sample phase=query index=hnsw-cosine bits=- ef=10 query=11 wall_ms=0.050 checksum=29290
+sample phase=query index=hnsw-cosine bits=- ef=10 query=12 wall_ms=0.030 checksum=48916
+sample phase=query index=hnsw-cosine bits=- ef=10 query=13 wall_ms=0.030 checksum=55197
+sample phase=query index=hnsw-cosine bits=- ef=10 query=14 wall_ms=0.049 checksum=37296
+sample phase=query index=hnsw-cosine bits=- ef=10 query=15 wall_ms=0.035 checksum=40082
+sample phase=query index=hnsw-cosine bits=- ef=10 query=16 wall_ms=0.031 checksum=34165
+sample phase=query index=hnsw-cosine bits=- ef=10 query=17 wall_ms=0.050 checksum=59579
+sample phase=query index=hnsw-cosine bits=- ef=10 query=18 wall_ms=0.032 checksum=55827
+sample phase=query index=hnsw-cosine bits=- ef=10 query=19 wall_ms=0.033 checksum=37424
+sample phase=query index=hnsw-cosine bits=- ef=10 query=20 wall_ms=0.045 checksum=40562
+sample phase=query index=hnsw-cosine bits=- ef=10 query=21 wall_ms=0.052 checksum=31930
+sample phase=query index=hnsw-cosine bits=- ef=10 query=22 wall_ms=0.055 checksum=33274
+sample phase=query index=hnsw-cosine bits=- ef=10 query=23 wall_ms=0.027 checksum=57616
+sample phase=query index=hnsw-cosine bits=- ef=10 query=24 wall_ms=0.034 checksum=49657
+sample phase=query index=hnsw-cosine bits=- ef=10 query=25 wall_ms=0.047 checksum=24933
+sample phase=query index=hnsw-cosine bits=- ef=10 query=26 wall_ms=0.032 checksum=40356
+sample phase=query index=hnsw-cosine bits=- ef=10 query=27 wall_ms=0.042 checksum=44594
+sample phase=query index=hnsw-cosine bits=- ef=10 query=28 wall_ms=0.033 checksum=45419
+sample phase=query index=hnsw-cosine bits=- ef=10 query=29 wall_ms=0.046 checksum=32742
+sample phase=query index=hnsw-cosine bits=- ef=10 query=30 wall_ms=0.038 checksum=42687
+sample phase=query index=hnsw-cosine bits=- ef=10 query=31 wall_ms=0.037 checksum=35818
+sample phase=query index=hnsw-cosine bits=- ef=10 query=32 wall_ms=0.033 checksum=57689
+sample phase=query index=hnsw-cosine bits=- ef=10 query=33 wall_ms=0.032 checksum=27129
+sample phase=query index=hnsw-cosine bits=- ef=10 query=34 wall_ms=0.039 checksum=49375
+sample phase=query index=hnsw-cosine bits=- ef=10 query=35 wall_ms=0.033 checksum=33577
+sample phase=query index=hnsw-cosine bits=- ef=10 query=36 wall_ms=0.043 checksum=39725
+sample phase=query index=hnsw-cosine bits=- ef=10 query=37 wall_ms=0.059 checksum=34923
+sample phase=query index=hnsw-cosine bits=- ef=10 query=38 wall_ms=0.030 checksum=36244
+sample phase=query index=hnsw-cosine bits=- ef=10 query=39 wall_ms=0.041 checksum=54201
+sample phase=query index=hnsw-cosine bits=- ef=10 query=40 wall_ms=0.030 checksum=52928
+sample phase=query index=hnsw-cosine bits=- ef=10 query=41 wall_ms=0.049 checksum=46839
+sample phase=query index=hnsw-cosine bits=- ef=10 query=42 wall_ms=0.029 checksum=51249
+sample phase=query index=hnsw-cosine bits=- ef=10 query=43 wall_ms=0.035 checksum=52677
+sample phase=query index=hnsw-cosine bits=- ef=10 query=44 wall_ms=0.029 checksum=51274
+sample phase=query index=hnsw-cosine bits=- ef=10 query=45 wall_ms=0.029 checksum=37729
+sample phase=query index=hnsw-cosine bits=- ef=10 query=46 wall_ms=0.049 checksum=31966
+sample phase=query index=hnsw-cosine bits=- ef=10 query=47 wall_ms=0.040 checksum=45889
+sample phase=query index=hnsw-cosine bits=- ef=10 query=48 wall_ms=0.026 checksum=55110
+sample phase=query index=hnsw-cosine bits=- ef=10 query=49 wall_ms=0.035 checksum=53727
+search index=hnsw-cosine bits=- ef=10 median_ms_per_query=0.042 p95_ms_per_query=0.052 qps=23536.800 cpu_ms_per_query=0.042 cpu_qps=23540.490 recall_at_10=0.068 checksum=12855772
+sample phase=batch index=hnsw-cosine bits=- ef=20 trial=0 wall_ms=3.996 cpu_ms=3.997 checksum=2241230
+sample phase=batch index=hnsw-cosine bits=- ef=20 trial=1 wall_ms=3.819 cpu_ms=3.818 checksum=2241231
+sample phase=batch index=hnsw-cosine bits=- ef=20 trial=2 wall_ms=3.999 cpu_ms=4.000 checksum=2241232
+sample phase=batch index=hnsw-cosine bits=- ef=20 trial=3 wall_ms=4.749 cpu_ms=4.559 checksum=2241233
+sample phase=batch index=hnsw-cosine bits=- ef=20 trial=4 wall_ms=4.609 cpu_ms=4.586 checksum=2241234
+sample phase=query index=hnsw-cosine bits=- ef=20 query=0 wall_ms=0.086 checksum=59306
+sample phase=query index=hnsw-cosine bits=- ef=20 query=1 wall_ms=0.086 checksum=33832
+sample phase=query index=hnsw-cosine bits=- ef=20 query=2 wall_ms=0.104 checksum=39982
+sample phase=query index=hnsw-cosine bits=- ef=20 query=3 wall_ms=0.076 checksum=40220
+sample phase=query index=hnsw-cosine bits=- ef=20 query=4 wall_ms=0.070 checksum=25954
+sample phase=query index=hnsw-cosine bits=- ef=20 query=5 wall_ms=0.073 checksum=51237
+sample phase=query index=hnsw-cosine bits=- ef=20 query=6 wall_ms=0.104 checksum=46496
+sample phase=query index=hnsw-cosine bits=- ef=20 query=7 wall_ms=0.079 checksum=32476
+sample phase=query index=hnsw-cosine bits=- ef=20 query=8 wall_ms=0.102 checksum=41594
+sample phase=query index=hnsw-cosine bits=- ef=20 query=9 wall_ms=0.094 checksum=38415
+sample phase=query index=hnsw-cosine bits=- ef=20 query=10 wall_ms=0.107 checksum=41723
+sample phase=query index=hnsw-cosine bits=- ef=20 query=11 wall_ms=0.087 checksum=26299
+sample phase=query index=hnsw-cosine bits=- ef=20 query=12 wall_ms=0.092 checksum=32494
+sample phase=query index=hnsw-cosine bits=- ef=20 query=13 wall_ms=0.066 checksum=48337
+sample phase=query index=hnsw-cosine bits=- ef=20 query=14 wall_ms=0.073 checksum=39993
+sample phase=query index=hnsw-cosine bits=- ef=20 query=15 wall_ms=0.083 checksum=54515
+sample phase=query index=hnsw-cosine bits=- ef=20 query=16 wall_ms=0.103 checksum=42141
+sample phase=query index=hnsw-cosine bits=- ef=20 query=17 wall_ms=0.108 checksum=50612
+sample phase=query index=hnsw-cosine bits=- ef=20 query=18 wall_ms=0.114 checksum=58962
+sample phase=query index=hnsw-cosine bits=- ef=20 query=19 wall_ms=0.072 checksum=43672
+sample phase=query index=hnsw-cosine bits=- ef=20 query=20 wall_ms=0.082 checksum=43499
+sample phase=query index=hnsw-cosine bits=- ef=20 query=21 wall_ms=0.104 checksum=34321
+sample phase=query index=hnsw-cosine bits=- ef=20 query=22 wall_ms=0.091 checksum=34902
+sample phase=query index=hnsw-cosine bits=- ef=20 query=23 wall_ms=0.109 checksum=58332
+sample phase=query index=hnsw-cosine bits=- ef=20 query=24 wall_ms=0.063 checksum=50826
+sample phase=query index=hnsw-cosine bits=- ef=20 query=25 wall_ms=0.070 checksum=26155
+sample phase=query index=hnsw-cosine bits=- ef=20 query=26 wall_ms=0.083 checksum=46757
+sample phase=query index=hnsw-cosine bits=- ef=20 query=27 wall_ms=0.064 checksum=49009
+sample phase=query index=hnsw-cosine bits=- ef=20 query=28 wall_ms=0.168 checksum=44471
+sample phase=query index=hnsw-cosine bits=- ef=20 query=29 wall_ms=0.124 checksum=32742
+sample phase=query index=hnsw-cosine bits=- ef=20 query=30 wall_ms=0.133 checksum=37627
+sample phase=query index=hnsw-cosine bits=- ef=20 query=31 wall_ms=0.099 checksum=36952
+sample phase=query index=hnsw-cosine bits=- ef=20 query=32 wall_ms=0.093 checksum=44092
+sample phase=query index=hnsw-cosine bits=- ef=20 query=33 wall_ms=0.089 checksum=35327
+sample phase=query index=hnsw-cosine bits=- ef=20 query=34 wall_ms=0.091 checksum=55041
+sample phase=query index=hnsw-cosine bits=- ef=20 query=35 wall_ms=0.116 checksum=41174
+sample phase=query index=hnsw-cosine bits=- ef=20 query=36 wall_ms=0.124 checksum=42190
+sample phase=query index=hnsw-cosine bits=- ef=20 query=37 wall_ms=0.116 checksum=33848
+sample phase=query index=hnsw-cosine bits=- ef=20 query=38 wall_ms=0.097 checksum=64571
+sample phase=query index=hnsw-cosine bits=- ef=20 query=39 wall_ms=0.074 checksum=62850
+sample phase=query index=hnsw-cosine bits=- ef=20 query=40 wall_ms=0.086 checksum=54959
+sample phase=query index=hnsw-cosine bits=- ef=20 query=41 wall_ms=0.106 checksum=53413
+sample phase=query index=hnsw-cosine bits=- ef=20 query=42 wall_ms=0.090 checksum=50898
+sample phase=query index=hnsw-cosine bits=- ef=20 query=43 wall_ms=0.067 checksum=60277
+sample phase=query index=hnsw-cosine bits=- ef=20 query=44 wall_ms=0.123 checksum=47099
+sample phase=query index=hnsw-cosine bits=- ef=20 query=45 wall_ms=0.101 checksum=50394
+sample phase=query index=hnsw-cosine bits=- ef=20 query=46 wall_ms=0.113 checksum=38861
+sample phase=query index=hnsw-cosine bits=- ef=20 query=47 wall_ms=0.074 checksum=48260
+sample phase=query index=hnsw-cosine bits=- ef=20 query=48 wall_ms=0.084 checksum=48861
+sample phase=query index=hnsw-cosine bits=- ef=20 query=49 wall_ms=0.060 checksum=65262
+search index=hnsw-cosine bits=- ef=20 median_ms_per_query=0.080 p95_ms_per_query=0.124 qps=12502.216 cpu_ms_per_query=0.080 cpu_qps=12500.000 recall_at_10=0.122 checksum=13447390
+sample phase=batch index=hnsw-cosine bits=- ef=40 trial=0 wall_ms=6.939 cpu_ms=6.940 checksum=2153775
+sample phase=batch index=hnsw-cosine bits=- ef=40 trial=1 wall_ms=7.574 cpu_ms=7.554 checksum=2153776
+sample phase=batch index=hnsw-cosine bits=- ef=40 trial=2 wall_ms=8.109 cpu_ms=8.113 checksum=2153777
+sample phase=batch index=hnsw-cosine bits=- ef=40 trial=3 wall_ms=8.331 cpu_ms=8.320 checksum=2153778
+sample phase=batch index=hnsw-cosine bits=- ef=40 trial=4 wall_ms=8.400 cpu_ms=8.355 checksum=2153779
+sample phase=query index=hnsw-cosine bits=- ef=40 query=0 wall_ms=0.140 checksum=61316
+sample phase=query index=hnsw-cosine bits=- ef=40 query=1 wall_ms=0.137 checksum=29403
+sample phase=query index=hnsw-cosine bits=- ef=40 query=2 wall_ms=0.151 checksum=45591
+sample phase=query index=hnsw-cosine bits=- ef=40 query=3 wall_ms=0.289 checksum=48119
+sample phase=query index=hnsw-cosine bits=- ef=40 query=4 wall_ms=0.246 checksum=33648
+sample phase=query index=hnsw-cosine bits=- ef=40 query=5 wall_ms=0.197 checksum=50773
+sample phase=query index=hnsw-cosine bits=- ef=40 query=6 wall_ms=0.162 checksum=40188
+sample phase=query index=hnsw-cosine bits=- ef=40 query=7 wall_ms=0.139 checksum=30812
+sample phase=query index=hnsw-cosine bits=- ef=40 query=8 wall_ms=0.184 checksum=37616
+sample phase=query index=hnsw-cosine bits=- ef=40 query=9 wall_ms=0.145 checksum=44614
+sample phase=query index=hnsw-cosine bits=- ef=40 query=10 wall_ms=0.305 checksum=45860
+sample phase=query index=hnsw-cosine bits=- ef=40 query=11 wall_ms=0.166 checksum=32295
+sample phase=query index=hnsw-cosine bits=- ef=40 query=12 wall_ms=0.165 checksum=39159
+sample phase=query index=hnsw-cosine bits=- ef=40 query=13 wall_ms=0.157 checksum=34568
+sample phase=query index=hnsw-cosine bits=- ef=40 query=14 wall_ms=0.164 checksum=41124
+sample phase=query index=hnsw-cosine bits=- ef=40 query=15 wall_ms=0.188 checksum=36186
+sample phase=query index=hnsw-cosine bits=- ef=40 query=16 wall_ms=0.153 checksum=40262
+sample phase=query index=hnsw-cosine bits=- ef=40 query=17 wall_ms=0.142 checksum=48851
+sample phase=query index=hnsw-cosine bits=- ef=40 query=18 wall_ms=0.121 checksum=41873
+sample phase=query index=hnsw-cosine bits=- ef=40 query=19 wall_ms=0.143 checksum=30697
+sample phase=query index=hnsw-cosine bits=- ef=40 query=20 wall_ms=0.136 checksum=53143
+sample phase=query index=hnsw-cosine bits=- ef=40 query=21 wall_ms=0.149 checksum=37603
+sample phase=query index=hnsw-cosine bits=- ef=40 query=22 wall_ms=0.142 checksum=35558
+sample phase=query index=hnsw-cosine bits=- ef=40 query=23 wall_ms=0.173 checksum=53809
+sample phase=query index=hnsw-cosine bits=- ef=40 query=24 wall_ms=0.148 checksum=36736
+sample phase=query index=hnsw-cosine bits=- ef=40 query=25 wall_ms=0.151 checksum=36859
+sample phase=query index=hnsw-cosine bits=- ef=40 query=26 wall_ms=0.149 checksum=46603
+sample phase=query index=hnsw-cosine bits=- ef=40 query=27 wall_ms=0.164 checksum=32320
+sample phase=query index=hnsw-cosine bits=- ef=40 query=28 wall_ms=0.174 checksum=57790
+sample phase=query index=hnsw-cosine bits=- ef=40 query=29 wall_ms=0.165 checksum=37002
+sample phase=query index=hnsw-cosine bits=- ef=40 query=30 wall_ms=0.162 checksum=42336
+sample phase=query index=hnsw-cosine bits=- ef=40 query=31 wall_ms=0.134 checksum=36647
+sample phase=query index=hnsw-cosine bits=- ef=40 query=32 wall_ms=0.160 checksum=39194
+sample phase=query index=hnsw-cosine bits=- ef=40 query=33 wall_ms=0.132 checksum=40414
+sample phase=query index=hnsw-cosine bits=- ef=40 query=34 wall_ms=0.128 checksum=45888
+sample phase=query index=hnsw-cosine bits=- ef=40 query=35 wall_ms=0.177 checksum=44625
+sample phase=query index=hnsw-cosine bits=- ef=40 query=36 wall_ms=0.177 checksum=39094
+sample phase=query index=hnsw-cosine bits=- ef=40 query=37 wall_ms=0.167 checksum=33848
+sample phase=query index=hnsw-cosine bits=- ef=40 query=38 wall_ms=0.159 checksum=58696
+sample phase=query index=hnsw-cosine bits=- ef=40 query=39 wall_ms=0.164 checksum=48638
+sample phase=query index=hnsw-cosine bits=- ef=40 query=40 wall_ms=0.128 checksum=52760
+sample phase=query index=hnsw-cosine bits=- ef=40 query=41 wall_ms=0.194 checksum=44157
+sample phase=query index=hnsw-cosine bits=- ef=40 query=42 wall_ms=0.167 checksum=43781
+sample phase=query index=hnsw-cosine bits=- ef=40 query=43 wall_ms=0.178 checksum=61796
+sample phase=query index=hnsw-cosine bits=- ef=40 query=44 wall_ms=0.164 checksum=51658
+sample phase=query index=hnsw-cosine bits=- ef=40 query=45 wall_ms=0.158 checksum=45717
+sample phase=query index=hnsw-cosine bits=- ef=40 query=46 wall_ms=0.160 checksum=36081
+sample phase=query index=hnsw-cosine bits=- ef=40 query=47 wall_ms=0.137 checksum=50279
+sample phase=query index=hnsw-cosine bits=- ef=40 query=48 wall_ms=0.147 checksum=42393
+sample phase=query index=hnsw-cosine bits=- ef=40 query=49 wall_ms=0.117 checksum=55395
+search index=hnsw-cosine bits=- ef=40 median_ms_per_query=0.162 p95_ms_per_query=0.246 qps=6165.735 cpu_ms_per_query=0.162 cpu_qps=6162.948 recall_at_10=0.216 checksum=12922660
+sample phase=batch index=hnsw-cosine bits=- ef=60 trial=0 wall_ms=10.100 cpu_ms=10.101 checksum=2102147
+sample phase=batch index=hnsw-cosine bits=- ef=60 trial=1 wall_ms=10.073 cpu_ms=10.056 checksum=2102148
+sample phase=batch index=hnsw-cosine bits=- ef=60 trial=2 wall_ms=13.036 cpu_ms=12.908 checksum=2102149
+sample phase=batch index=hnsw-cosine bits=- ef=60 trial=3 wall_ms=12.515 cpu_ms=12.451 checksum=2102150
+sample phase=batch index=hnsw-cosine bits=- ef=60 trial=4 wall_ms=11.126 cpu_ms=11.068 checksum=2102151
+sample phase=query index=hnsw-cosine bits=- ef=60 query=0 wall_ms=0.288 checksum=53416
+sample phase=query index=hnsw-cosine bits=- ef=60 query=1 wall_ms=0.244 checksum=30187
+sample phase=query index=hnsw-cosine bits=- ef=60 query=2 wall_ms=0.238 checksum=55061
+sample phase=query index=hnsw-cosine bits=- ef=60 query=3 wall_ms=0.276 checksum=47099
+sample phase=query index=hnsw-cosine bits=- ef=60 query=4 wall_ms=0.256 checksum=31086
+sample phase=query index=hnsw-cosine bits=- ef=60 query=5 wall_ms=0.224 checksum=54870
+sample phase=query index=hnsw-cosine bits=- ef=60 query=6 wall_ms=0.219 checksum=43355
+sample phase=query index=hnsw-cosine bits=- ef=60 query=7 wall_ms=0.204 checksum=37263
+sample phase=query index=hnsw-cosine bits=- ef=60 query=8 wall_ms=0.214 checksum=41625
+sample phase=query index=hnsw-cosine bits=- ef=60 query=9 wall_ms=0.208 checksum=41236
+sample phase=query index=hnsw-cosine bits=- ef=60 query=10 wall_ms=0.215 checksum=45860
+sample phase=query index=hnsw-cosine bits=- ef=60 query=11 wall_ms=0.212 checksum=49684
+sample phase=query index=hnsw-cosine bits=- ef=60 query=12 wall_ms=0.209 checksum=25110
+sample phase=query index=hnsw-cosine bits=- ef=60 query=13 wall_ms=0.217 checksum=29493
+sample phase=query index=hnsw-cosine bits=- ef=60 query=14 wall_ms=0.196 checksum=41124
+sample phase=query index=hnsw-cosine bits=- ef=60 query=15 wall_ms=0.225 checksum=36186
+sample phase=query index=hnsw-cosine bits=- ef=60 query=16 wall_ms=0.242 checksum=41150
+sample phase=query index=hnsw-cosine bits=- ef=60 query=17 wall_ms=0.186 checksum=46526
+sample phase=query index=hnsw-cosine bits=- ef=60 query=18 wall_ms=0.200 checksum=47244
+sample phase=query index=hnsw-cosine bits=- ef=60 query=19 wall_ms=0.207 checksum=39103
+sample phase=query index=hnsw-cosine bits=- ef=60 query=20 wall_ms=0.225 checksum=57273
+sample phase=query index=hnsw-cosine bits=- ef=60 query=21 wall_ms=0.203 checksum=29882
+sample phase=query index=hnsw-cosine bits=- ef=60 query=22 wall_ms=0.195 checksum=29319
+sample phase=query index=hnsw-cosine bits=- ef=60 query=23 wall_ms=0.282 checksum=54644
+sample phase=query index=hnsw-cosine bits=- ef=60 query=24 wall_ms=0.235 checksum=30272
+sample phase=query index=hnsw-cosine bits=- ef=60 query=25 wall_ms=0.190 checksum=30358
+sample phase=query index=hnsw-cosine bits=- ef=60 query=26 wall_ms=0.211 checksum=43307
+sample phase=query index=hnsw-cosine bits=- ef=60 query=27 wall_ms=0.186 checksum=32142
+sample phase=query index=hnsw-cosine bits=- ef=60 query=28 wall_ms=0.198 checksum=56406
+sample phase=query index=hnsw-cosine bits=- ef=60 query=29 wall_ms=0.207 checksum=37002
+sample phase=query index=hnsw-cosine bits=- ef=60 query=30 wall_ms=0.193 checksum=38220
+sample phase=query index=hnsw-cosine bits=- ef=60 query=31 wall_ms=0.208 checksum=30730
+sample phase=query index=hnsw-cosine bits=- ef=60 query=32 wall_ms=0.199 checksum=33453
+sample phase=query index=hnsw-cosine bits=- ef=60 query=33 wall_ms=0.185 checksum=45204
+sample phase=query index=hnsw-cosine bits=- ef=60 query=34 wall_ms=0.219 checksum=41849
+sample phase=query index=hnsw-cosine bits=- ef=60 query=35 wall_ms=0.221 checksum=35318
+sample phase=query index=hnsw-cosine bits=- ef=60 query=36 wall_ms=0.299 checksum=44343
+sample phase=query index=hnsw-cosine bits=- ef=60 query=37 wall_ms=0.201 checksum=34646
+sample phase=query index=hnsw-cosine bits=- ef=60 query=38 wall_ms=0.192 checksum=55449
+sample phase=query index=hnsw-cosine bits=- ef=60 query=39 wall_ms=0.189 checksum=47721
+sample phase=query index=hnsw-cosine bits=- ef=60 query=40 wall_ms=0.199 checksum=43540
+sample phase=query index=hnsw-cosine bits=- ef=60 query=41 wall_ms=0.200 checksum=36209
+sample phase=query index=hnsw-cosine bits=- ef=60 query=42 wall_ms=0.181 checksum=41917
+sample phase=query index=hnsw-cosine bits=- ef=60 query=43 wall_ms=0.178 checksum=61902
+sample phase=query index=hnsw-cosine bits=- ef=60 query=44 wall_ms=0.195 checksum=44989
+sample phase=query index=hnsw-cosine bits=- ef=60 query=45 wall_ms=0.198 checksum=46440
+sample phase=query index=hnsw-cosine bits=- ef=60 query=46 wall_ms=0.186 checksum=30788
+sample phase=query index=hnsw-cosine bits=- ef=60 query=47 wall_ms=0.191 checksum=64381
+sample phase=query index=hnsw-cosine bits=- ef=60 query=48 wall_ms=0.213 checksum=42393
+sample phase=query index=hnsw-cosine bits=- ef=60 query=49 wall_ms=0.193 checksum=45372
+search index=hnsw-cosine bits=- ef=60 median_ms_per_query=0.223 p95_ms_per_query=0.282 qps=4494.062 cpu_ms_per_query=0.221 cpu_qps=4517.528 recall_at_10=0.274 checksum=12612892
+sample phase=batch index=hnsw-cosine bits=- ef=100 trial=0 wall_ms=15.809 cpu_ms=15.809 checksum=2156630
+sample phase=batch index=hnsw-cosine bits=- ef=100 trial=1 wall_ms=15.795 cpu_ms=15.792 checksum=2156631
+sample phase=batch index=hnsw-cosine bits=- ef=100 trial=2 wall_ms=16.729 cpu_ms=16.587 checksum=2156632
+sample phase=batch index=hnsw-cosine bits=- ef=100 trial=3 wall_ms=16.302 cpu_ms=16.231 checksum=2156633
+sample phase=batch index=hnsw-cosine bits=- ef=100 trial=4 wall_ms=15.712 cpu_ms=15.712 checksum=2156634
+sample phase=query index=hnsw-cosine bits=- ef=100 query=0 wall_ms=0.341 checksum=49198
+sample phase=query index=hnsw-cosine bits=- ef=100 query=1 wall_ms=0.279 checksum=37076
+sample phase=query index=hnsw-cosine bits=- ef=100 query=2 wall_ms=0.354 checksum=63719
+sample phase=query index=hnsw-cosine bits=- ef=100 query=3 wall_ms=0.385 checksum=52207
+sample phase=query index=hnsw-cosine bits=- ef=100 query=4 wall_ms=0.363 checksum=35023
+sample phase=query index=hnsw-cosine bits=- ef=100 query=5 wall_ms=0.328 checksum=54870
+sample phase=query index=hnsw-cosine bits=- ef=100 query=6 wall_ms=0.313 checksum=42332
+sample phase=query index=hnsw-cosine bits=- ef=100 query=7 wall_ms=0.313 checksum=43131
+sample phase=query index=hnsw-cosine bits=- ef=100 query=8 wall_ms=0.320 checksum=52632
+sample phase=query index=hnsw-cosine bits=- ef=100 query=9 wall_ms=0.310 checksum=56464
+sample phase=query index=hnsw-cosine bits=- ef=100 query=10 wall_ms=0.329 checksum=44063
+sample phase=query index=hnsw-cosine bits=- ef=100 query=11 wall_ms=0.277 checksum=50511
+sample phase=query index=hnsw-cosine bits=- ef=100 query=12 wall_ms=0.290 checksum=28885
+sample phase=query index=hnsw-cosine bits=- ef=100 query=13 wall_ms=0.288 checksum=35850
+sample phase=query index=hnsw-cosine bits=- ef=100 query=14 wall_ms=0.284 checksum=37256
+sample phase=query index=hnsw-cosine bits=- ef=100 query=15 wall_ms=0.294 checksum=34418
+sample phase=query index=hnsw-cosine bits=- ef=100 query=16 wall_ms=0.282 checksum=43806
+sample phase=query index=hnsw-cosine bits=- ef=100 query=17 wall_ms=0.300 checksum=49413
+sample phase=query index=hnsw-cosine bits=- ef=100 query=18 wall_ms=0.290 checksum=46039
+sample phase=query index=hnsw-cosine bits=- ef=100 query=19 wall_ms=0.307 checksum=43411
+sample phase=query index=hnsw-cosine bits=- ef=100 query=20 wall_ms=0.353 checksum=54696
+sample phase=query index=hnsw-cosine bits=- ef=100 query=21 wall_ms=0.376 checksum=35218
+sample phase=query index=hnsw-cosine bits=- ef=100 query=22 wall_ms=0.317 checksum=29721
+sample phase=query index=hnsw-cosine bits=- ef=100 query=23 wall_ms=0.346 checksum=55627
+sample phase=query index=hnsw-cosine bits=- ef=100 query=24 wall_ms=0.331 checksum=42904
+sample phase=query index=hnsw-cosine bits=- ef=100 query=25 wall_ms=0.319 checksum=35980
+sample phase=query index=hnsw-cosine bits=- ef=100 query=26 wall_ms=0.301 checksum=44163
+sample phase=query index=hnsw-cosine bits=- ef=100 query=27 wall_ms=0.299 checksum=43481
+sample phase=query index=hnsw-cosine bits=- ef=100 query=28 wall_ms=0.304 checksum=52606
+sample phase=query index=hnsw-cosine bits=- ef=100 query=29 wall_ms=0.339 checksum=35237
+sample phase=query index=hnsw-cosine bits=- ef=100 query=30 wall_ms=0.328 checksum=34174
+sample phase=query index=hnsw-cosine bits=- ef=100 query=31 wall_ms=0.349 checksum=38650
+sample phase=query index=hnsw-cosine bits=- ef=100 query=32 wall_ms=0.344 checksum=34400
+sample phase=query index=hnsw-cosine bits=- ef=100 query=33 wall_ms=0.322 checksum=41498
+sample phase=query index=hnsw-cosine bits=- ef=100 query=34 wall_ms=0.288 checksum=40701
+sample phase=query index=hnsw-cosine bits=- ef=100 query=35 wall_ms=0.358 checksum=32376
+sample phase=query index=hnsw-cosine bits=- ef=100 query=36 wall_ms=0.315 checksum=49089
+sample phase=query index=hnsw-cosine bits=- ef=100 query=37 wall_ms=0.288 checksum=41526
+sample phase=query index=hnsw-cosine bits=- ef=100 query=38 wall_ms=0.292 checksum=55645
+sample phase=query index=hnsw-cosine bits=- ef=100 query=39 wall_ms=0.297 checksum=51139
+sample phase=query index=hnsw-cosine bits=- ef=100 query=40 wall_ms=0.290 checksum=32835
+sample phase=query index=hnsw-cosine bits=- ef=100 query=41 wall_ms=0.342 checksum=30460
+sample phase=query index=hnsw-cosine bits=- ef=100 query=42 wall_ms=0.326 checksum=42051
+sample phase=query index=hnsw-cosine bits=- ef=100 query=43 wall_ms=0.293 checksum=59751
+sample phase=query index=hnsw-cosine bits=- ef=100 query=44 wall_ms=0.355 checksum=32576
+sample phase=query index=hnsw-cosine bits=- ef=100 query=45 wall_ms=0.343 checksum=33548
+sample phase=query index=hnsw-cosine bits=- ef=100 query=46 wall_ms=0.330 checksum=38762
+sample phase=query index=hnsw-cosine bits=- ef=100 query=47 wall_ms=0.366 checksum=53137
+sample phase=query index=hnsw-cosine bits=- ef=100 query=48 wall_ms=0.344 checksum=40003
+sample phase=query index=hnsw-cosine bits=- ef=100 query=49 wall_ms=0.380 checksum=44372
+search index=hnsw-cosine bits=- ef=100 median_ms_per_query=0.316 p95_ms_per_query=0.376 qps=3162.739 cpu_ms_per_query=0.316 cpu_qps=3162.755 recall_at_10=0.414 checksum=12939790
+sample phase=batch index=hnsw-cosine bits=- ef=200 trial=0 wall_ms=30.220 cpu_ms=30.155 checksum=2253527
+sample phase=batch index=hnsw-cosine bits=- ef=200 trial=1 wall_ms=30.060 cpu_ms=29.758 checksum=2253528
+sample phase=batch index=hnsw-cosine bits=- ef=200 trial=2 wall_ms=28.044 cpu_ms=27.953 checksum=2253529
+sample phase=batch index=hnsw-cosine bits=- ef=200 trial=3 wall_ms=27.900 cpu_ms=27.900 checksum=2253530
+sample phase=batch index=hnsw-cosine bits=- ef=200 trial=4 wall_ms=29.636 cpu_ms=29.554 checksum=2253531
+sample phase=query index=hnsw-cosine bits=- ef=200 query=0 wall_ms=0.544 checksum=64102
+sample phase=query index=hnsw-cosine bits=- ef=200 query=1 wall_ms=0.533 checksum=56930
+sample phase=query index=hnsw-cosine bits=- ef=200 query=2 wall_ms=0.556 checksum=65779
+sample phase=query index=hnsw-cosine bits=- ef=200 query=3 wall_ms=0.589 checksum=42390
+sample phase=query index=hnsw-cosine bits=- ef=200 query=4 wall_ms=0.584 checksum=43196
+sample phase=query index=hnsw-cosine bits=- ef=200 query=5 wall_ms=0.566 checksum=60862
+sample phase=query index=hnsw-cosine bits=- ef=200 query=6 wall_ms=0.524 checksum=47673
+sample phase=query index=hnsw-cosine bits=- ef=200 query=7 wall_ms=0.512 checksum=34297
+sample phase=query index=hnsw-cosine bits=- ef=200 query=8 wall_ms=0.519 checksum=52714
+sample phase=query index=hnsw-cosine bits=- ef=200 query=9 wall_ms=0.505 checksum=54048
+sample phase=query index=hnsw-cosine bits=- ef=200 query=10 wall_ms=0.540 checksum=59292
+sample phase=query index=hnsw-cosine bits=- ef=200 query=11 wall_ms=0.546 checksum=56011
+sample phase=query index=hnsw-cosine bits=- ef=200 query=12 wall_ms=0.533 checksum=34344
+sample phase=query index=hnsw-cosine bits=- ef=200 query=13 wall_ms=0.528 checksum=36032
+sample phase=query index=hnsw-cosine bits=- ef=200 query=14 wall_ms=0.604 checksum=33404
+sample phase=query index=hnsw-cosine bits=- ef=200 query=15 wall_ms=0.670 checksum=31419
+sample phase=query index=hnsw-cosine bits=- ef=200 query=16 wall_ms=0.614 checksum=39573
+sample phase=query index=hnsw-cosine bits=- ef=200 query=17 wall_ms=0.595 checksum=49700
+sample phase=query index=hnsw-cosine bits=- ef=200 query=18 wall_ms=0.583 checksum=40439
+sample phase=query index=hnsw-cosine bits=- ef=200 query=19 wall_ms=0.627 checksum=41704
+sample phase=query index=hnsw-cosine bits=- ef=200 query=20 wall_ms=0.600 checksum=47662
+sample phase=query index=hnsw-cosine bits=- ef=200 query=21 wall_ms=0.545 checksum=40728
+sample phase=query index=hnsw-cosine bits=- ef=200 query=22 wall_ms=0.576 checksum=34923
+sample phase=query index=hnsw-cosine bits=- ef=200 query=23 wall_ms=0.591 checksum=54237
+sample phase=query index=hnsw-cosine bits=- ef=200 query=24 wall_ms=0.601 checksum=31214
+sample phase=query index=hnsw-cosine bits=- ef=200 query=25 wall_ms=0.712 checksum=35450
+sample phase=query index=hnsw-cosine bits=- ef=200 query=26 wall_ms=0.660 checksum=59023
+sample phase=query index=hnsw-cosine bits=- ef=200 query=27 wall_ms=0.650 checksum=55206
+sample phase=query index=hnsw-cosine bits=- ef=200 query=28 wall_ms=0.572 checksum=53247
+sample phase=query index=hnsw-cosine bits=- ef=200 query=29 wall_ms=0.541 checksum=38790
+sample phase=query index=hnsw-cosine bits=- ef=200 query=30 wall_ms=0.525 checksum=37466
+sample phase=query index=hnsw-cosine bits=- ef=200 query=31 wall_ms=0.529 checksum=42989
+sample phase=query index=hnsw-cosine bits=- ef=200 query=32 wall_ms=0.532 checksum=31747
+sample phase=query index=hnsw-cosine bits=- ef=200 query=33 wall_ms=0.524 checksum=47497
+sample phase=query index=hnsw-cosine bits=- ef=200 query=34 wall_ms=0.509 checksum=46623
+sample phase=query index=hnsw-cosine bits=- ef=200 query=35 wall_ms=0.507 checksum=39938
+sample phase=query index=hnsw-cosine bits=- ef=200 query=36 wall_ms=0.492 checksum=46204
+sample phase=query index=hnsw-cosine bits=- ef=200 query=37 wall_ms=0.516 checksum=37343
+sample phase=query index=hnsw-cosine bits=- ef=200 query=38 wall_ms=0.510 checksum=50640
+sample phase=query index=hnsw-cosine bits=- ef=200 query=39 wall_ms=0.520 checksum=51552
+sample phase=query index=hnsw-cosine bits=- ef=200 query=40 wall_ms=0.535 checksum=23757
+sample phase=query index=hnsw-cosine bits=- ef=200 query=41 wall_ms=0.599 checksum=35222
+sample phase=query index=hnsw-cosine bits=- ef=200 query=42 wall_ms=0.640 checksum=50799
+sample phase=query index=hnsw-cosine bits=- ef=200 query=43 wall_ms=0.583 checksum=53549
+sample phase=query index=hnsw-cosine bits=- ef=200 query=44 wall_ms=0.536 checksum=36169
+sample phase=query index=hnsw-cosine bits=- ef=200 query=45 wall_ms=0.518 checksum=31811
+sample phase=query index=hnsw-cosine bits=- ef=200 query=46 wall_ms=0.507 checksum=43166
+sample phase=query index=hnsw-cosine bits=- ef=200 query=47 wall_ms=0.519 checksum=58472
+sample phase=query index=hnsw-cosine bits=- ef=200 query=48 wall_ms=0.525 checksum=46419
+sample phase=query index=hnsw-cosine bits=- ef=200 query=49 wall_ms=0.633 checksum=47775
+search index=hnsw-cosine bits=- ef=200 median_ms_per_query=0.593 p95_ms_per_query=0.660 qps=1687.128 cpu_ms_per_query=0.591 cpu_qps=1691.818 recall_at_10=0.624 checksum=13521172
+sample phase=batch index=hnsw-cosine bits=- ef=400 trial=0 wall_ms=53.321 cpu_ms=53.090 checksum=2256696
+sample phase=batch index=hnsw-cosine bits=- ef=400 trial=1 wall_ms=50.014 cpu_ms=49.709 checksum=2256697
+sample phase=batch index=hnsw-cosine bits=- ef=400 trial=2 wall_ms=57.960 cpu_ms=57.159 checksum=2256698
+sample phase=batch index=hnsw-cosine bits=- ef=400 trial=3 wall_ms=51.754 cpu_ms=51.533 checksum=2256699
+sample phase=batch index=hnsw-cosine bits=- ef=400 trial=4 wall_ms=59.927 cpu_ms=59.477 checksum=2256700
+sample phase=query index=hnsw-cosine bits=- ef=400 query=0 wall_ms=1.088 checksum=47601
+sample phase=query index=hnsw-cosine bits=- ef=400 query=1 wall_ms=1.064 checksum=54757
+sample phase=query index=hnsw-cosine bits=- ef=400 query=2 wall_ms=1.043 checksum=66058
+sample phase=query index=hnsw-cosine bits=- ef=400 query=3 wall_ms=1.103 checksum=47706
+sample phase=query index=hnsw-cosine bits=- ef=400 query=4 wall_ms=1.051 checksum=47693
+sample phase=query index=hnsw-cosine bits=- ef=400 query=5 wall_ms=1.013 checksum=60483
+sample phase=query index=hnsw-cosine bits=- ef=400 query=6 wall_ms=0.982 checksum=34789
+sample phase=query index=hnsw-cosine bits=- ef=400 query=7 wall_ms=1.046 checksum=42050
+sample phase=query index=hnsw-cosine bits=- ef=400 query=8 wall_ms=1.123 checksum=47739
+sample phase=query index=hnsw-cosine bits=- ef=400 query=9 wall_ms=1.222 checksum=48623
+sample phase=query index=hnsw-cosine bits=- ef=400 query=10 wall_ms=1.069 checksum=51452
+sample phase=query index=hnsw-cosine bits=- ef=400 query=11 wall_ms=1.038 checksum=40223
+sample phase=query index=hnsw-cosine bits=- ef=400 query=12 wall_ms=1.017 checksum=46910
+sample phase=query index=hnsw-cosine bits=- ef=400 query=13 wall_ms=0.966 checksum=36032
+sample phase=query index=hnsw-cosine bits=- ef=400 query=14 wall_ms=0.974 checksum=37938
+sample phase=query index=hnsw-cosine bits=- ef=400 query=15 wall_ms=1.104 checksum=48233
+sample phase=query index=hnsw-cosine bits=- ef=400 query=16 wall_ms=1.192 checksum=39573
+sample phase=query index=hnsw-cosine bits=- ef=400 query=17 wall_ms=1.107 checksum=45716
+sample phase=query index=hnsw-cosine bits=- ef=400 query=18 wall_ms=1.191 checksum=35930
+sample phase=query index=hnsw-cosine bits=- ef=400 query=19 wall_ms=1.158 checksum=52606
+sample phase=query index=hnsw-cosine bits=- ef=400 query=20 wall_ms=1.028 checksum=48567
+sample phase=query index=hnsw-cosine bits=- ef=400 query=21 wall_ms=0.938 checksum=52544
+sample phase=query index=hnsw-cosine bits=- ef=400 query=22 wall_ms=0.973 checksum=35599
+sample phase=query index=hnsw-cosine bits=- ef=400 query=23 wall_ms=0.975 checksum=50067
+sample phase=query index=hnsw-cosine bits=- ef=400 query=24 wall_ms=0.943 checksum=30443
+sample phase=query index=hnsw-cosine bits=- ef=400 query=25 wall_ms=0.928 checksum=35450
+sample phase=query index=hnsw-cosine bits=- ef=400 query=26 wall_ms=0.903 checksum=48905
+sample phase=query index=hnsw-cosine bits=- ef=400 query=27 wall_ms=0.977 checksum=61386
+sample phase=query index=hnsw-cosine bits=- ef=400 query=28 wall_ms=1.030 checksum=67328
+sample phase=query index=hnsw-cosine bits=- ef=400 query=29 wall_ms=1.024 checksum=39798
+sample phase=query index=hnsw-cosine bits=- ef=400 query=30 wall_ms=1.042 checksum=42024
+sample phase=query index=hnsw-cosine bits=- ef=400 query=31 wall_ms=1.001 checksum=42989
+sample phase=query index=hnsw-cosine bits=- ef=400 query=32 wall_ms=0.974 checksum=33146
+sample phase=query index=hnsw-cosine bits=- ef=400 query=33 wall_ms=0.947 checksum=41018
+sample phase=query index=hnsw-cosine bits=- ef=400 query=34 wall_ms=0.957 checksum=42072
+sample phase=query index=hnsw-cosine bits=- ef=400 query=35 wall_ms=0.954 checksum=32637
+sample phase=query index=hnsw-cosine bits=- ef=400 query=36 wall_ms=0.905 checksum=53235
+sample phase=query index=hnsw-cosine bits=- ef=400 query=37 wall_ms=0.881 checksum=37343
+sample phase=query index=hnsw-cosine bits=- ef=400 query=38 wall_ms=1.059 checksum=33622
+sample phase=query index=hnsw-cosine bits=- ef=400 query=39 wall_ms=1.015 checksum=57974
+sample phase=query index=hnsw-cosine bits=- ef=400 query=40 wall_ms=1.063 checksum=23757
+sample phase=query index=hnsw-cosine bits=- ef=400 query=41 wall_ms=1.122 checksum=40840
+sample phase=query index=hnsw-cosine bits=- ef=400 query=42 wall_ms=1.132 checksum=51914
+sample phase=query index=hnsw-cosine bits=- ef=400 query=43 wall_ms=1.116 checksum=53549
+sample phase=query index=hnsw-cosine bits=- ef=400 query=44 wall_ms=1.026 checksum=38930
+sample phase=query index=hnsw-cosine bits=- ef=400 query=45 wall_ms=1.038 checksum=24207
+sample phase=query index=hnsw-cosine bits=- ef=400 query=46 wall_ms=1.093 checksum=50421
+sample phase=query index=hnsw-cosine bits=- ef=400 query=47 wall_ms=1.022 checksum=61582
+sample phase=query index=hnsw-cosine bits=- ef=400 query=48 wall_ms=0.984 checksum=45312
+sample phase=query index=hnsw-cosine bits=- ef=400 query=49 wall_ms=0.995 checksum=47925
+search index=hnsw-cosine bits=- ef=400 median_ms_per_query=1.066 p95_ms_per_query=1.191 qps=937.713 cpu_ms_per_query=1.062 cpu_qps=941.797 recall_at_10=0.828 checksum=13540186

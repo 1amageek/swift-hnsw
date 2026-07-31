@@ -14,6 +14,18 @@ struct HNSWIndexContractTests {
                 metric: .l2
             )
         }
+        #expect(
+            throws: HNSWError.initializationFailed(
+                "Query workspace exceeds the 256 MiB limit"
+            )
+        ) {
+            _ = try HNSWIndex<Float>(
+                dimensions: HNSWSearchWorkspace.maximumRetainedByteCount
+                    / MemoryLayout<Float>.stride + 1,
+                maxElements: 1,
+                metric: .l2
+            )
+        }
     }
 
     @Test("Exact L2 ordering and deterministic tie break")
@@ -248,11 +260,21 @@ struct HNSWIndexContractTests {
 
     @Test("Invalid construction and search arguments throw typed errors")
     func invalidConstructionAndSearchArgumentsThrowTypedErrors() throws {
-        #expect(throws: HNSWError.invalidArgument("m must be at least 2 and small enough to calculate connection capacity")) {
+        #expect(throws: HNSWError.invalidArgument("m must be between 2 and 10000")) {
             _ = try HNSWIndex<Float>(
                 dimensions: 2,
                 maxElements: 2,
                 configuration: HNSWConfiguration(m: 1)
+            )
+        }
+        #expect(throws: HNSWError.invalidArgument("m must be between 2 and 10000")) {
+            _ = try HNSWIndex<Float>(
+                dimensions: 2,
+                maxElements: 2,
+                configuration: HNSWConfiguration(
+                    m: HNSWConfiguration.maximumM + 1,
+                    efConstruction: HNSWConfiguration.maximumM + 1
+                )
             )
         }
         #expect(throws: HNSWError.invalidArgument("efConstruction must be at least m")) {
@@ -280,6 +302,95 @@ struct HNSWIndexContractTests {
         #expect(throws: HNSWError.invalidArgument("numQueries must not be negative")) {
             _ = try index.searchBatch([], numQueries: -1, k: 1)
         }
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "batch dimensions exceed the supported integer range"
+            )
+        ) {
+            _ = try index.searchBatch([], numQueries: Int.max, k: 1)
+        }
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "startingLabel and batch size exceed the UInt64 label range"
+            )
+        ) {
+            _ = try index.addBatch([[0, 0], [1, 0]], startingLabel: UInt64.max)
+        }
+        #expect(throws: HNSWError.dimensionMismatch(expected: 0, got: 2)) {
+            _ = try index.addBatch([0, 0], labels: [])
+        }
+    }
+
+    @Test("Resize preserves the archive capacity contract")
+    func resizePreservesArchiveCapacityContract() throws {
+        let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 2)
+
+        #expect(
+            throws: HNSWError.invalidArgument("newCapacity must be positive")
+        ) {
+            try index.resize(to: 0)
+        }
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "newCapacity must fit the archive format"
+            )
+        ) {
+            try index.resize(to: Int(UInt32.max) + 1)
+        }
+        try index.resize(to: 4)
+        #expect(index.capacity == 4)
+        _ = try index.serializedArchive()
+    }
+
+    @Test("Search workspace rejects unaddressable retained storage")
+    func searchWorkspaceRejectsUnaddressableRetainedStorage() {
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "search workspace size exceeds the supported integer range"
+            )
+        ) {
+            try HNSWSearchWorkspace.validateRetainedCapacity(
+                candidateCapacity: Int.max,
+                nearestCapacity: Int.max,
+                resultCapacity: Int.max,
+                visitedCapacity: Int.max
+            )
+        }
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "search workspace exceeds the 256 MiB limit"
+            )
+        ) {
+            try HNSWSearchWorkspace.validateRetainedCapacity(
+                candidateCapacity: 30_000_000,
+                nearestCapacity: 1,
+                resultCapacity: 1,
+                visitedCapacity: 30_000_000
+            )
+        }
+    }
+
+    @Test("Search workspace grows geometrically without changing requested bounds")
+    func searchWorkspaceGrowsGeometrically() {
+        var workspace = HNSWSearchWorkspace()
+        let firstCounts = workspace.withCandidateBuffers(
+            candidateCapacity: 2,
+            nearestCapacity: 1,
+            visitedCapacity: 2
+        ) { candidates, nearest, results in
+            [candidates.count, nearest.count, results.count]
+        }
+        let secondCounts = workspace.withCandidateBuffers(
+            candidateCapacity: 3,
+            nearestCapacity: 1,
+            visitedCapacity: 3
+        ) { candidates, nearest, results in
+            [candidates.count, nearest.count, results.count]
+        }
+
+        #expect(firstCounts == [2, 1, 1])
+        #expect(secondCounts == [3, 1, 1])
+        #expect(workspace.retainedCandidateCapacities.candidate == 4)
     }
 
     @Test("Concurrent reads and writes preserve index state", .timeLimit(.minutes(1)))
@@ -379,6 +490,57 @@ struct HNSWIndexContractTests {
             )
         }
     }
+
+    @Test("Graph loader rejects vector storage overflow before allocation")
+    func graphLoaderRejectsVectorStorageOverflowBeforeAllocation() throws {
+        let payload = invalidGraphPayloadWithOversizedVectorStorage()
+
+        #expect(
+            throws: HNSWError.loadFailed(
+                "Graph index vector storage exceeds the addressable range"
+            )
+        ) {
+            _ = try HNSWIndex<Float>.restore(
+                from: payload,
+                dimensions: Int(UInt32.max),
+                metric: .l2
+            )
+        }
+    }
+
+    @Test("Graph loader rejects retained graph storage before allocation")
+    func graphLoaderRejectsOversizedRetainedGraph() throws {
+        let payload = invalidGraphPayloadWithOversizedRetainedGraph()
+
+        #expect(
+            throws: HNSWError.loadFailed(
+                "Graph index retained graph storage exceeds the 256 MiB limit"
+            )
+        ) {
+            _ = try HNSWIndex<Float>.restore(
+                from: payload,
+                dimensions: 1,
+                metric: .l2
+            )
+        }
+    }
+
+    @Test("Graph loader rejects cumulative upper-level storage before allocation")
+    func graphLoaderRejectsOversizedUpperLevelStorage() throws {
+        let payload = invalidGraphPayloadWithOversizedUpperLevelStorage()
+
+        #expect(
+            throws: HNSWError.loadFailed(
+                "Graph index retained graph storage exceeds the 256 MiB limit"
+            )
+        ) {
+            _ = try HNSWIndex<Float>.restore(
+                from: payload,
+                dimensions: 1,
+                metric: .l2
+            )
+        }
+    }
 }
 
 @Suite("TurboQuant index contract", .serialized)
@@ -394,11 +556,24 @@ struct TurboQuantIndexContractTests {
         #expect(throws: HNSWError.invalidArgument("efSearch must be positive")) {
             try index.setEfSearch(-1)
         }
+        #expect(throws: HNSWError.invalidArgument("efSearch must fit the archive format")) {
+            try index.setEfSearch(Int(UInt32.max) + 1)
+        }
         try index.setEfSearch(1)
     }
 
     @Test("Invalid construction and search arguments throw typed errors")
     func invalidConstructionAndSearchArgumentsThrowTypedErrors() throws {
+        #expect(throws: HNSWError.invalidArgument("m must be between 2 and 10000")) {
+            _ = try TurboQuantIndex(
+                dimensions: 2,
+                maxElements: 2,
+                configuration: HNSWConfiguration(
+                    m: HNSWConfiguration.maximumM + 1,
+                    efConstruction: HNSWConfiguration.maximumM + 1
+                )
+            )
+        }
         #expect(throws: HNSWError.invalidArgument("efConstruction must be at least m")) {
             _ = try TurboQuantIndex(
                 dimensions: 2,
@@ -420,8 +595,8 @@ struct TurboQuantIndexContractTests {
         }
     }
 
-    @Test("Exact cosine ordering and deterministic tie break")
-    func exactCosineOrderingAndTieBreak() throws {
+    @Test("TurboQuant cosine ordering and deterministic tie break")
+    func turboQuantCosineOrderingAndTieBreak() throws {
         let index = try TurboQuantIndex(dimensions: 2, maxElements: 4, bitWidth: 4)
         try index.add([1, 0], label: 20)
         try index.add([0, 1], label: 30)
@@ -430,8 +605,11 @@ struct TurboQuantIndexContractTests {
         let results = try index.search([4, 0], k: 3)
 
         #expect(results.map(\.label) == [10, 20, 30])
-        #expect(results[0].distance == 0)
-        #expect(results[1].distance == 0)
+        // TurboQuant reports ADC distance, so quantization error is expected even for
+        // identical normalized vectors. Ordering and deterministic label tie-breaking
+        // remain part of the public contract.
+        #expect(results[0].distance < 0.1)
+        #expect(results[1].distance < 0.1)
     }
 
     @Test("Finalize, capacity, save, and load semantics")
@@ -485,6 +663,38 @@ struct TurboQuantIndexContractTests {
         #expect(results.map(\.label) == [1, 2])
     }
 
+    @Test("Concurrent TurboQuant searches preserve deterministic results")
+    func concurrentTurboQuantSearches() async throws {
+        let dimensions = 32
+        let index = try TurboQuantIndex(
+            dimensions: dimensions,
+            maxElements: 64,
+            bitWidth: 3,
+            objective: .innerProduct
+        )
+        for label in 0..<64 {
+            try index.add(
+                (0..<dimensions).map {
+                    Float((label * 13 + $0 * 7) % 31 - 15)
+                },
+                label: UInt64(label)
+            )
+        }
+        let query = (0..<dimensions).map { Float(($0 * 11) % 29 - 14) }
+        let expected = try index.search(query, k: 10)
+
+        try await withThrowingTaskGroup(of: [SearchResult].self) { group in
+            for _ in 0..<16 {
+                group.addTask {
+                    try index.search(query, k: 10)
+                }
+            }
+            for try await results in group {
+                #expect(results == expected)
+            }
+        }
+    }
+
     @Test("Invalid serialized payload throws typed load error")
     func invalidPayloadThrows() throws {
         let path = temporaryPath(name: "turboquant_invalid_archive")
@@ -492,6 +702,203 @@ struct TurboQuantIndexContractTests {
         try Data([0, 1, 2, 3]).write(to: URL(fileURLWithPath: path))
 
         #expect(throws: HNSWError.self) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+    }
+
+    @Test("Invalid TurboQuant objective and rotation metadata fail explicitly")
+    func invalidTurboQuantMetadataThrows() throws {
+        let index = try TurboQuantIndex(
+            dimensions: 4,
+            maxElements: 1,
+            bitWidth: 4,
+            objective: .innerProduct,
+            rotationStrategy: .haar
+        )
+        try index.add([1, 0, 0, 0], label: 1)
+
+        let path = temporaryPath(name: "turboquant_invalid_metadata")
+        defer { removeFileIfPresent(path) }
+        try index.save(to: path)
+        let validArchive = try Data(contentsOf: URL(fileURLWithPath: path))
+
+        var invalidObjective = validArchive
+        invalidObjective.replaceSubrange(16..<20, with: [0xFF, 0xFF, 0xFF, 0xFF])
+        try invalidObjective.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains an invalid objective"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+
+        var invalidRotation = validArchive
+        invalidRotation.replaceSubrange(20..<24, with: [0xFF, 0xFF, 0xFF, 0xFF])
+        try invalidRotation.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains an invalid rotation strategy"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+
+        var invalidM = validArchive
+        invalidM.replaceSubrange(44..<48, with: [0x11, 0x27, 0, 0])
+        try invalidM.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains an invalid m"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+    }
+
+    @Test("TurboQuant loader rejects retained graph storage before allocation")
+    func turboQuantLoaderRejectsOversizedRetainedGraph() throws {
+        let path = temporaryPath(name: "turboquant_oversized_retained_graph")
+        defer { removeFileIfPresent(path) }
+        try invalidTurboQuantPayloadWithOversizedRetainedGraph().write(
+            to: URL(fileURLWithPath: path)
+        )
+
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive retained graph storage exceeds the 256 MiB limit"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+    }
+
+    @Test("TurboQuant loader rejects cumulative upper-level storage before allocation")
+    func turboQuantLoaderRejectsOversizedUpperLevelStorage() throws {
+        let path = temporaryPath(name: "turboquant_oversized_upper_level_storage")
+        defer { removeFileIfPresent(path) }
+        try invalidTurboQuantPayloadWithOversizedUpperLevelStorage().write(
+            to: URL(fileURLWithPath: path)
+        )
+
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive retained graph storage exceeds the 256 MiB limit"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+    }
+
+    @Test("TurboQuant archive rejects noncanonical values and truncated records")
+    func invalidTurboQuantRecordThrows() throws {
+        let index = try TurboQuantIndex(
+            dimensions: 4,
+            maxElements: 1,
+            bitWidth: 4,
+            objective: .innerProduct,
+            rotationStrategy: .haar
+        )
+        try index.add([1, 0, 0, 0], label: 1)
+
+        let path = temporaryPath(name: "turboquant_invalid_record")
+        defer { removeFileIfPresent(path) }
+        try index.save(to: path)
+        let validArchive = try Data(contentsOf: URL(fileURLWithPath: path))
+
+        var invalidBoolean = validArchive
+        invalidBoolean[64] = 2
+        try invalidBoolean.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains an invalid allowReplaceDeleted value"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+
+        var invalidReservedByte = validArchive
+        invalidReservedByte[65] = 1
+        try invalidReservedByte.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains nonzero reserved header bytes"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+
+        var invalidPadding = validArchive
+        invalidPadding[105] |= 0x80
+        try invalidPadding.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains nonzero MSE code padding bits"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+
+        var invalidResidualNorm = validArchive
+        let residualOffset = 107
+        var nanBits = Float.nan.bitPattern.littleEndian
+        withUnsafeBytes(of: &nanBits) { bytes in
+            invalidResidualNorm.replaceSubrange(
+                residualOffset..<(residualOffset + bytes.count),
+                with: bytes
+            )
+        }
+        try invalidResidualNorm.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains an invalid residual norm"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+
+        var oversizedResidualNorm = validArchive
+        var maximumFiniteBits = Float.greatestFiniteMagnitude.bitPattern.littleEndian
+        withUnsafeBytes(of: &maximumFiniteBits) { bytes in
+            oversizedResidualNorm.replaceSubrange(
+                residualOffset..<(residualOffset + bytes.count),
+                with: bytes
+            )
+        }
+        try oversizedResidualNorm.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains an invalid residual norm"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+
+        var truncatedRecord = validArchive
+        truncatedRecord.removeLast()
+        try truncatedRecord.write(to: URL(fileURLWithPath: path))
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive payload is too small for its declared label count"
+            )
+        ) {
+            _ = try TurboQuantIndex.load(from: path)
+        }
+    }
+
+    @Test("TurboQuant archive rejects invalid graph topology")
+    func invalidTurboQuantGraphThrows() throws {
+        let path = temporaryPath(name: "turboquant_invalid_graph")
+        defer { removeFileIfPresent(path) }
+        try invalidTurboQuantGraphPayloadWithSelfEdge().write(
+            to: URL(fileURLWithPath: path)
+        )
+
+        #expect(
+            throws: HNSWError.loadFailed(
+                "TurboQuant archive contains a self edge"
+            )
+        ) {
             _ = try TurboQuantIndex.load(from: path)
         }
     }
@@ -648,6 +1055,199 @@ private func invalidGraphPayloadWithInvalidNeighborID() -> Data {
     writer.writeUInt32(1)
     writer.writeUInt32(1)
     writer.writeUInt32(1)
+    return writer.data
+}
+
+private func invalidGraphPayloadWithOversizedVectorStorage() -> Data {
+    var writer = InvalidGraphPayloadWriter()
+    writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
+    writer.writeUInt32(2)
+    writer.writeUInt32(UInt32.max)
+    writer.writeUInt32(1)
+    writer.writeString("l2")
+    writer.writeUInt32(16)
+    writer.writeUInt32(200)
+    writer.writeUInt32(50)
+    writer.writeUInt32(100)
+    writer.writeBool(false)
+    writer.writeUInt32(UInt32.max)
+    writer.writeUInt32(UInt32.max)
+    writer.writeUInt64(1)
+    writer.writeUInt32(UInt32.max)
+    return writer.data
+}
+
+private func invalidGraphPayloadWithOversizedRetainedGraph() -> Data {
+    let labelCount = 4_000
+    var writer = InvalidGraphPayloadWriter()
+    writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
+    writer.writeUInt32(2)
+    writer.writeUInt32(1)
+    writer.writeUInt32(UInt32(labelCount))
+    writer.writeString("l2")
+    writer.writeUInt32(UInt32(HNSWConfiguration.maximumM))
+    writer.writeUInt32(UInt32(HNSWConfiguration.maximumM))
+    writer.writeUInt32(50)
+    writer.writeUInt32(100)
+    writer.writeBool(false)
+    writer.writeUInt32(0)
+    writer.writeUInt32(0)
+    writer.writeUInt64(1)
+    writer.writeUInt32(UInt32(labelCount))
+    for label in 0..<labelCount {
+        writer.writeUInt64(UInt64(label))
+        writer.writeBool(false)
+        writer.writeUInt32(0)
+        writer.writeFloat(0)
+        writer.writeUInt32(1)
+        writer.writeUInt32(0)
+    }
+    return writer.data
+}
+
+private func invalidGraphPayloadWithOversizedUpperLevelStorage() -> Data {
+    let labelCount = 107
+    let level = 63
+    var writer = InvalidGraphPayloadWriter()
+    writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
+    writer.writeUInt32(2)
+    writer.writeUInt32(1)
+    writer.writeUInt32(UInt32(labelCount))
+    writer.writeString("l2")
+    writer.writeUInt32(UInt32(HNSWConfiguration.maximumM))
+    writer.writeUInt32(UInt32(HNSWConfiguration.maximumM))
+    writer.writeUInt32(50)
+    writer.writeUInt32(100)
+    writer.writeBool(false)
+    writer.writeUInt32(UInt32(level))
+    writer.writeUInt32(0)
+    writer.writeUInt64(1)
+    writer.writeUInt32(UInt32(labelCount))
+    for label in 0..<labelCount {
+        writer.writeUInt64(UInt64(label))
+        writer.writeBool(false)
+        writer.writeUInt32(UInt32(level))
+        writer.writeFloat(0)
+        writer.writeUInt32(UInt32(level + 1))
+        for _ in 0...level {
+            writer.writeUInt32(0)
+        }
+    }
+    return writer.data
+}
+
+private func invalidTurboQuantGraphPayloadWithSelfEdge() -> Data {
+    var writer = InvalidGraphPayloadWriter()
+    writer.writeUInt32(0x5451_5746)
+    writer.writeUInt32(5)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeUInt32(TurboQuantObjective.meanSquaredError.rawValue)
+    writer.writeUInt32(TurboQuantRotationStrategy.structuredHadamard.rawValue)
+    writer.writeUInt64(42)
+    writer.writeUInt32(1)
+    writer.writeUInt32(2)
+    writer.writeUInt32(2)
+    writer.writeUInt32(2)
+    writer.writeUInt32(2)
+    writer.writeUInt32(10)
+    writer.writeUInt64(100)
+    writer.writeBool(false)
+    writer.writeBytes([0, 0, 0])
+    writer.writeUInt32(0)
+    writer.writeUInt32(0)
+    writer.writeUInt32(1)
+
+    writer.writeUInt64(10)
+    writer.writeBool(false)
+    writer.writeBytes([0, 0, 0])
+    writer.writeUInt32(0)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeUInt32(0)
+    writer.writeBytes([0])
+
+    writer.writeUInt64(20)
+    writer.writeBool(false)
+    writer.writeBytes([0, 0, 0])
+    writer.writeUInt32(0)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeUInt32(0)
+    writer.writeBytes([0])
+    return writer.data
+}
+
+private func invalidTurboQuantPayloadWithOversizedRetainedGraph() -> Data {
+    let labelCount = 4_000
+    var writer = InvalidGraphPayloadWriter()
+    writer.writeUInt32(0x5451_5746)
+    writer.writeUInt32(5)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeUInt32(TurboQuantObjective.meanSquaredError.rawValue)
+    writer.writeUInt32(TurboQuantRotationStrategy.structuredHadamard.rawValue)
+    writer.writeUInt64(42)
+    writer.writeUInt32(1)
+    writer.writeUInt32(UInt32(labelCount))
+    writer.writeUInt32(UInt32(labelCount))
+    writer.writeUInt32(UInt32(HNSWConfiguration.maximumM))
+    writer.writeUInt32(UInt32(HNSWConfiguration.maximumM))
+    writer.writeUInt32(10)
+    writer.writeUInt64(100)
+    writer.writeBool(false)
+    writer.writeBytes([0, 0, 0])
+    writer.writeUInt32(0)
+    writer.writeUInt32(0)
+    writer.writeUInt32(1)
+
+    for label in 0..<labelCount {
+        writer.writeUInt64(UInt64(label))
+        writer.writeBool(false)
+        writer.writeBytes([0, 0, 0])
+        writer.writeUInt32(0)
+        writer.writeUInt32(1)
+        writer.writeUInt32(0)
+        writer.writeBytes([0])
+    }
+    return writer.data
+}
+
+private func invalidTurboQuantPayloadWithOversizedUpperLevelStorage() -> Data {
+    let labelCount = 107
+    let level = 63
+    var writer = InvalidGraphPayloadWriter()
+    writer.writeUInt32(0x5451_5746)
+    writer.writeUInt32(5)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeUInt32(TurboQuantObjective.meanSquaredError.rawValue)
+    writer.writeUInt32(TurboQuantRotationStrategy.structuredHadamard.rawValue)
+    writer.writeUInt64(42)
+    writer.writeUInt32(1)
+    writer.writeUInt32(UInt32(labelCount))
+    writer.writeUInt32(UInt32(labelCount))
+    writer.writeUInt32(UInt32(HNSWConfiguration.maximumM))
+    writer.writeUInt32(UInt32(HNSWConfiguration.maximumM))
+    writer.writeUInt32(10)
+    writer.writeUInt64(100)
+    writer.writeBool(false)
+    writer.writeBytes([0, 0, 0])
+    writer.writeUInt32(0)
+    writer.writeUInt32(UInt32(level))
+    writer.writeUInt32(1)
+
+    for label in 0..<labelCount {
+        writer.writeUInt64(UInt64(label))
+        writer.writeBool(false)
+        writer.writeBytes([0, 0, 0])
+        writer.writeUInt32(UInt32(level))
+        writer.writeUInt32(UInt32(level + 1))
+        for _ in 0...level {
+            writer.writeUInt32(0)
+        }
+        writer.writeBytes([0])
+    }
     return writer.data
 }
 

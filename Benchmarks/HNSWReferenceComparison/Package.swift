@@ -16,9 +16,7 @@ let package = Package(
             path: "Sources/hnswlib",
             sources: [
                 "hnswlib_reference.cpp",
-                "space_f16.cpp",
-                "space_turboquant.cpp",
-                "turboquant_encoder.cpp"
+                "space_f16.cpp"
             ],
             publicHeadersPath: "include",
             cxxSettings: [
@@ -30,6 +28,12 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftHNSW", package: "swift-hnsw"),
                 "hnswlib"
+            ]
+        ),
+        .executableTarget(
+            name: "TurboQuantComparison",
+            dependencies: [
+                .product(name: "SwiftHNSW", package: "swift-hnsw")
             ]
         ),
     ],

@@ -51,14 +51,28 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
         guard dimensions > 0 else {
             throw HNSWError.initializationFailed("Dimensions must be positive")
         }
+        guard UInt64(dimensions) <= UInt64(UInt32.max) else {
+            throw HNSWError.initializationFailed(
+                "Dimensions must fit the archive format"
+            )
+        }
+        let queryScalarSize = Scalar.self == Float16.self
+            ? MemoryLayout<Float16>.stride
+            : MemoryLayout<Float>.stride
+        guard dimensions <= HNSWSearchWorkspace.maximumRetainedByteCount
+                / queryScalarSize else {
+            throw HNSWError.initializationFailed(
+                "Query workspace exceeds the 256 MiB limit"
+            )
+        }
         guard maxElements > 0 else {
             throw HNSWError.initializationFailed("Maximum element count must be positive")
         }
-        guard maxElements <= Int(UInt32.max) else {
+        guard UInt64(maxElements) <= UInt64(UInt32.max) else {
             throw HNSWError.initializationFailed("Maximum element count exceeds UInt32 internal id capacity")
         }
-        guard configuration.m >= 2, configuration.m <= (Int.max - 1) / 2 else {
-            throw HNSWError.invalidArgument("m must be at least 2 and small enough to calculate connection capacity")
+        guard (2...HNSWConfiguration.maximumM).contains(configuration.m) else {
+            throw HNSWError.invalidArgument("m must be between 2 and 10000")
         }
         guard configuration.efConstruction >= configuration.m else {
             throw HNSWError.invalidArgument("efConstruction must be at least m")
@@ -66,17 +80,38 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
         guard configuration.efSearch > 0 else {
             throw HNSWError.invalidArgument("efSearch must be positive")
         }
+        guard UInt64(configuration.m) <= UInt64(UInt32.max),
+              UInt64(configuration.efConstruction) <= UInt64(UInt32.max),
+              UInt64(configuration.efSearch) <= UInt64(UInt32.max) else {
+            throw HNSWError.invalidArgument("HNSW configuration values must fit the archive format")
+        }
+#if _pointerBitWidth(_64)
+        guard configuration.randomSeed >= Int(Int32.min),
+              configuration.randomSeed <= Int(Int32.max) else {
+            throw HNSWError.invalidArgument(
+                "randomSeed must fit the archive format"
+            )
+        }
+#endif
         self.dimensions = dimensions
         self.metric = metric
         self.configuration = configuration
         let usesHalfStorage = Scalar.self == Float16.self
         var comparisonStorage: [Float] = []
         var halfComparisonStorage: [Float16] = []
+        let maximumEagerComparisonBytes = 64 * 1_024 * 1_024
         if maxElements <= Int.max / dimensions {
-            if usesHalfStorage {
-                halfComparisonStorage.reserveCapacity(maxElements * dimensions)
-            } else {
-                comparisonStorage.reserveCapacity(maxElements * dimensions)
+            let elementCount = maxElements * dimensions
+            let scalarSize = usesHalfStorage
+                ? MemoryLayout<Float16>.stride
+                : MemoryLayout<Float>.stride
+            let canReserve = elementCount <= maximumEagerComparisonBytes / scalarSize
+            if canReserve {
+                if usesHalfStorage {
+                    halfComparisonStorage.reserveCapacity(elementCount)
+                } else {
+                    comparisonStorage.reserveCapacity(elementCount)
+                }
             }
         }
         self.state = Mutex(State(
@@ -119,12 +154,21 @@ public final class HNSWIndex<Scalar: HNSWScalar>: Sendable {
         guard ef > 0 else {
             throw HNSWError.invalidArgument("efSearch must be positive")
         }
+        guard UInt64(ef) <= UInt64(UInt32.max) else {
+            throw HNSWError.invalidArgument("efSearch must fit the archive format")
+        }
         state.withLock {
             $0.efSearch = ef
         }
     }
 
     public func resize(to newCapacity: Int) throws {
+        guard newCapacity > 0 else {
+            throw HNSWError.invalidArgument("newCapacity must be positive")
+        }
+        guard UInt64(newCapacity) <= UInt64(UInt32.max) else {
+            throw HNSWError.invalidArgument("newCapacity must fit the archive format")
+        }
         try state.withLock {
             guard newCapacity >= $0.entries.count else {
                 throw HNSWError.addPointFailed("Cannot resize index below current element count")
@@ -169,7 +213,8 @@ extension HNSWIndex {
             throw HNSWError.invalidArgument("k must be positive")
         }
 
-        return state.withLock { state in
+        return try state.withLock { state in
+            try validateSearchWorkspace(k: k, state: state)
             if Scalar.self == Float.self, !metric.requiresNormalization {
                 let floatQuery = UnsafeBufferPointer<Float>(
                     start: UnsafeRawPointer(query.baseAddress!).assumingMemoryBound(to: Float.self),
@@ -228,7 +273,8 @@ extension HNSWIndex {
             throw HNSWError.invalidArgument("Result buffer must contain at least k elements")
         }
 
-        return state.withLock { state in
+        return try state.withLock { state in
+            try validateSearchWorkspace(k: k, state: state)
             if Scalar.self == Float.self, !metric.requiresNormalization {
                 let floatQuery = UnsafeBufferPointer<Float>(
                     start: UnsafeRawPointer(query.baseAddress!).assumingMemoryBound(to: Float.self),
@@ -329,8 +375,14 @@ extension HNSWIndex {
         labels: UnsafeBufferPointer<UInt64>
     ) throws -> Int {
         let numVectors = labels.count
+        guard numVectors <= Int.max / dimensions else {
+            throw HNSWError.invalidArgument(
+                "batch dimensions exceed the supported integer range"
+            )
+        }
+        let expectedVectorCount = numVectors * dimensions
+        try validateDimensions(vectors.count, expectedTotal: expectedVectorCount)
         guard numVectors > 0 else { return 0 }
-        try validateDimensions(vectors.count, expectedTotal: numVectors * dimensions)
 
         return try state.withLock { state in
             var addedCount = 0
@@ -352,6 +404,11 @@ extension HNSWIndex {
         }
 
         let start = startingLabel ?? UInt64(count)
+        guard UInt64(vectors.count - 1) <= UInt64.max - start else {
+            throw HNSWError.invalidArgument(
+                "startingLabel and batch size exceed the UInt64 label range"
+            )
+        }
         var addedCount = 0
         for index in vectors.indices {
             try add(vectors[index], label: start + UInt64(index))
@@ -379,10 +436,17 @@ extension HNSWIndex {
         guard k > 0 else {
             throw HNSWError.invalidArgument("k must be positive")
         }
-        try validateDimensions(queries.count, expectedTotal: numQueries * dimensions)
+        guard numQueries <= Int.max / dimensions else {
+            throw HNSWError.invalidArgument(
+                "batch dimensions exceed the supported integer range"
+            )
+        }
+        let expectedQueryCount = numQueries * dimensions
+        try validateDimensions(queries.count, expectedTotal: expectedQueryCount)
         guard numQueries > 0 else { return [] }
 
-        return state.withLock { state in
+        return try state.withLock { state in
+            try validateSearchWorkspace(k: k, state: state)
             var results: [[SearchResult]] = []
             results.reserveCapacity(numQueries)
             for index in 0..<numQueries {
@@ -712,23 +776,23 @@ extension HNSWIndex {
         guard version == 2 else {
             throw HNSWError.loadFailed("Unsupported graph index version")
         }
-        let storedDimensions = Int(try reader.readUInt32())
+        let storedDimensions = try reader.readIntFromUInt32(name: "dimensions")
         guard storedDimensions == dimensions else {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: storedDimensions)
         }
-        let storedCapacity = Int(try reader.readUInt32())
+        let storedCapacity = try reader.readIntFromUInt32(name: "capacity")
         let storedMetric = try reader.readString()
         guard storedMetric == metric.rawValue else {
             throw HNSWError.loadFailed("Stored metric \(storedMetric) does not match \(metric.rawValue)")
         }
 
-        let storedM = Int(try reader.readUInt32())
-        let storedEfConstruction = Int(try reader.readUInt32())
-        let storedEfSearch = Int(try reader.readUInt32())
-        guard storedM > 0 else {
+        let storedM = try reader.readIntFromUInt32(name: "m")
+        let storedEfConstruction = try reader.readIntFromUInt32(name: "efConstruction")
+        let storedEfSearch = try reader.readIntFromUInt32(name: "efSearch")
+        guard (2...HNSWConfiguration.maximumM).contains(storedM) else {
             throw HNSWError.loadFailed("Graph index contains invalid M")
         }
-        guard storedEfConstruction > 0, storedEfSearch > 0 else {
+        guard storedEfConstruction >= storedM, storedEfSearch > 0 else {
             throw HNSWError.loadFailed("Graph index contains invalid ef value")
         }
         let storedSeed = Int(Int32(bitPattern: try reader.readUInt32()))
@@ -736,7 +800,21 @@ extension HNSWIndex {
         let storedMaxLevel = Int(Int32(bitPattern: try reader.readUInt32()))
         let storedEntryPoint = try reader.readUInt32()
         let generatorState = try reader.readUInt64()
-        let labelCount = Int(try reader.readUInt32())
+        let labelCount = try reader.readIntFromUInt32(name: "labelCount")
+        let vectorValueCount = try validateArchivePayloadCapacity(
+            labelCount: labelCount,
+            dimensions: dimensions,
+            fixedRecordByteCount: 21,
+            remainingByteCount: reader.remainingByteCount,
+            archiveName: "Graph index"
+        )
+        try validateArchiveRetainedCapacity(
+            labelCount: labelCount,
+            totalUpperLevelSlotCount: 0,
+            m: storedM,
+            efSearch: storedEfSearch,
+            archiveName: "Graph index"
+        )
 
         let capacity = max(maxElements, storedCapacity, labelCount)
         let index = try HNSWIndex(
@@ -764,11 +842,12 @@ extension HNSWIndex {
         loadedDeletedFlags.reserveCapacity(labelCount)
         loadedLevels.reserveCapacity(labelCount)
         if Scalar.self == Float16.self {
-            loadedHalfComparisonStorage.reserveCapacity(labelCount * dimensions)
+            loadedHalfComparisonStorage.reserveCapacity(vectorValueCount)
         } else {
-            loadedComparisonStorage.reserveCapacity(labelCount * dimensions)
+            loadedComparisonStorage.reserveCapacity(vectorValueCount)
         }
         loadedConnections.reserveCapacity(labelCount)
+        var totalUpperLevelSlotCount = 0
 
         for internalID in 0..<labelCount {
             let label = try reader.readUInt64()
@@ -776,10 +855,25 @@ extension HNSWIndex {
                 throw HNSWError.loadFailed("Graph index contains duplicate labels")
             }
             let deleted = try reader.readBool()
-            let level = Int(try reader.readUInt32())
+            let level = try reader.readIntFromUInt32(name: "level")
             guard level >= 0, level < Self.maximumSerializedLevelCount else {
                 throw HNSWError.loadFailed("Graph index contains invalid level")
             }
+            let (nextUpperLevelSlotCount, upperLevelCountOverflowed) =
+                totalUpperLevelSlotCount.addingReportingOverflow(level)
+            guard !upperLevelCountOverflowed else {
+                throw HNSWError.loadFailed(
+                    "Graph index retained graph storage exceeds the addressable range"
+                )
+            }
+            try validateArchiveRetainedCapacity(
+                labelCount: labelCount,
+                totalUpperLevelSlotCount: nextUpperLevelSlotCount,
+                m: storedM,
+                efSearch: storedEfSearch,
+                archiveName: "Graph index"
+            )
+            totalUpperLevelSlotCount = nextUpperLevelSlotCount
             let offset = Scalar.self == Float16.self ? loadedHalfComparisonStorage.count : loadedComparisonStorage.count
             for _ in 0..<dimensions {
                 let value = try reader.readFloat()
@@ -790,14 +884,14 @@ extension HNSWIndex {
                 }
             }
 
-            let levelCount = Int(try reader.readUInt32())
+            let levelCount = try reader.readIntFromUInt32(name: "levelCount")
             guard levelCount == level + 1 else {
                 throw HNSWError.loadFailed("Graph index level count does not match node level")
             }
             var nodeConnections: [[Int]] = []
             nodeConnections.reserveCapacity(levelCount)
             for levelIndex in 0..<levelCount {
-                let neighborCount = Int(try reader.readUInt32())
+                let neighborCount = try reader.readIntFromUInt32(name: "neighborCount")
                 guard neighborCount <= max(0, labelCount - 1) else {
                     throw HNSWError.loadFailed("Graph index contains too many neighbors")
                 }
@@ -807,7 +901,7 @@ extension HNSWIndex {
                 var neighbors: [Int] = []
                 neighbors.reserveCapacity(neighborCount)
                 for _ in 0..<neighborCount {
-                    let neighbor = Int(try reader.readUInt32())
+                    let neighbor = try reader.readIntFromUInt32(name: "neighbor")
                     guard neighbor >= 0, neighbor < labelCount else {
                         throw HNSWError.loadFailed("Graph index contains invalid neighbor id")
                     }
@@ -866,6 +960,12 @@ extension HNSWIndex {
             $0.levelGenerator = HNSWLevelGenerator(state: generatorState)
             $0.visited = [UInt16](repeating: 0, count: labelCount)
             $0.visitedTag = 0
+            $0.searchWorkspace.prepare(
+                candidateCapacity: labelCount,
+                nearestCapacity: min(storedEfSearch, labelCount),
+                resultCapacity: 1,
+                visitedCapacity: labelCount
+            )
             $0.queryWorkspace = Scalar.self == Float16.self ? [] : [Float](repeating: 0, count: dimensions)
             $0.halfPrecisionQueryWorkspace = Scalar.self == Float16.self ? [Float16](repeating: 0, count: dimensions) : []
         }
@@ -961,24 +1061,38 @@ extension HNSWIndex {
         guard version == 1 else {
             throw HNSWError.loadFailed("Unsupported flat index version")
         }
-        let storedDimensions = Int(try reader.readUInt32())
+        let storedDimensions = try reader.readIntFromUInt32(name: "dimensions")
         guard storedDimensions == dimensions else {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: storedDimensions)
         }
-        let storedCapacity = Int(try reader.readUInt32())
+        let storedCapacity = try reader.readIntFromUInt32(name: "capacity")
         let storedMetric = try reader.readString()
         guard storedMetric == metric.rawValue else {
             throw HNSWError.loadFailed("Stored metric \(storedMetric) does not match \(metric.rawValue)")
         }
 
-        let capacity = max(maxElements, storedCapacity)
+        let labelCount = try reader.readIntFromUInt32(name: "labelCount")
+        let vectorValueCount = try validateArchivePayloadCapacity(
+            labelCount: labelCount,
+            dimensions: dimensions,
+            fixedRecordByteCount: 9,
+            remainingByteCount: reader.remainingByteCount,
+            archiveName: "Flat index"
+        )
+        try validateArchiveRetainedCapacity(
+            labelCount: labelCount,
+            totalUpperLevelSlotCount: 0,
+            m: HNSWConfiguration.balanced.m,
+            efSearch: HNSWConfiguration.balanced.efSearch,
+            archiveName: "Flat index"
+        )
+        let capacity = max(maxElements, storedCapacity, labelCount)
         let index = try HNSWIndex(
             dimensions: dimensions,
             maxElements: max(1, capacity),
             metric: metric,
             configuration: .balanced
         )
-        let labelCount = Int(try reader.readUInt32())
         var loadedEntries: [UInt64: Entry] = [:]
         var loadedLabelOrder: [UInt64] = []
         var loadedDeletedFlags: [UInt8] = []
@@ -991,9 +1105,9 @@ extension HNSWIndex {
         loadedDeletedFlags.reserveCapacity(labelCount)
         loadedLevels.reserveCapacity(labelCount)
         if Scalar.self == Float16.self {
-            loadedHalfComparisonStorage.reserveCapacity(labelCount * dimensions)
+            loadedHalfComparisonStorage.reserveCapacity(vectorValueCount)
         } else {
-            loadedComparisonStorage.reserveCapacity(labelCount * dimensions)
+            loadedComparisonStorage.reserveCapacity(vectorValueCount)
         }
         loadedConnections.reserveCapacity(labelCount)
 
@@ -1001,6 +1115,7 @@ extension HNSWIndex {
         let multiplier = 1.0 / hnswNaturalLog(
             Double(max(2, HNSWConfiguration.balanced.m))
         )
+        var totalUpperLevelSlotCount = 0
         for internalID in 0..<labelCount {
             let label = try reader.readUInt64()
             let deleted = try reader.readBool()
@@ -1014,6 +1129,21 @@ extension HNSWIndex {
                 }
             }
             let level = generator.randomLevel(multiplier: multiplier)
+            let (nextUpperLevelSlotCount, upperLevelCountOverflowed) =
+                totalUpperLevelSlotCount.addingReportingOverflow(level)
+            guard !upperLevelCountOverflowed else {
+                throw HNSWError.loadFailed(
+                    "Flat index retained graph storage exceeds the addressable range"
+                )
+            }
+            try validateArchiveRetainedCapacity(
+                labelCount: labelCount,
+                totalUpperLevelSlotCount: nextUpperLevelSlotCount,
+                m: HNSWConfiguration.balanced.m,
+                efSearch: HNSWConfiguration.balanced.efSearch,
+                archiveName: "Flat index"
+            )
+            totalUpperLevelSlotCount = nextUpperLevelSlotCount
             loadedEntries[label] = Entry(
                 internalID: HNSWInternalID(internalID),
                 offset: offset,
@@ -1041,11 +1171,84 @@ extension HNSWIndex {
             $0.levelGenerator = generator
             $0.visited = [UInt16](repeating: 0, count: labelCount)
             $0.visitedTag = 0
+            $0.searchWorkspace.prepare(
+                candidateCapacity: labelCount,
+                nearestCapacity: min(HNSWConfiguration.balanced.efSearch, labelCount),
+                resultCapacity: 1,
+                visitedCapacity: labelCount
+            )
             $0.queryWorkspace = Scalar.self == Float16.self ? [] : [Float](repeating: 0, count: dimensions)
             $0.halfPrecisionQueryWorkspace = Scalar.self == Float16.self ? [Float16](repeating: 0, count: dimensions) : []
             index.rebuildGraph(state: &$0)
         }
         return index
+    }
+
+    private static func validateArchivePayloadCapacity(
+        labelCount: Int,
+        dimensions: Int,
+        fixedRecordByteCount: Int,
+        remainingByteCount: Int,
+        archiveName: String
+    ) throws -> Int {
+        guard labelCount == 0 || labelCount <= Int.max / dimensions else {
+            throw HNSWError.loadFailed(
+                "\(archiveName) vector storage exceeds the addressable range"
+            )
+        }
+        guard dimensions <= (Int.max - fixedRecordByteCount)
+                / MemoryLayout<Float>.stride else {
+            throw HNSWError.loadFailed(
+                "\(archiveName) record size exceeds the addressable range"
+            )
+        }
+        let minimumRecordByteCount = fixedRecordByteCount
+            + dimensions * MemoryLayout<Float>.stride
+        guard labelCount == 0
+                || labelCount <= remainingByteCount / minimumRecordByteCount else {
+            throw HNSWError.loadFailed(
+                "\(archiveName) payload is too small for its declared label count"
+            )
+        }
+        return labelCount * dimensions
+    }
+
+    private static func validateArchiveRetainedCapacity(
+        labelCount: Int,
+        totalUpperLevelSlotCount: Int,
+        m: Int,
+        efSearch: Int,
+        archiveName: String
+    ) throws {
+        guard let graphBytes = HNSWConnectionStore.retainedByteCount(
+            nodeCount: labelCount,
+            totalUpperLevelSlotCount: totalUpperLevelSlotCount,
+            m: m
+        ) else {
+            throw HNSWError.loadFailed(
+                "\(archiveName) retained graph storage exceeds the addressable range"
+            )
+        }
+        guard graphBytes <= HNSWConnectionStore.maximumRetainedByteCount else {
+            throw HNSWError.loadFailed(
+                "\(archiveName) retained graph storage exceeds the 256 MiB limit"
+            )
+        }
+        guard let searchBytes = HNSWSearchWorkspace.retainedByteCount(
+            candidateCapacity: labelCount,
+            nearestCapacity: min(efSearch, labelCount),
+            resultCapacity: 1,
+            visitedCapacity: labelCount
+        ) else {
+            throw HNSWError.loadFailed(
+                "\(archiveName) search workspace exceeds the addressable range"
+            )
+        }
+        guard searchBytes <= HNSWSearchWorkspace.maximumRetainedByteCount else {
+            throw HNSWError.loadFailed(
+                "\(archiveName) search workspace exceeds the 256 MiB limit"
+            )
+        }
     }
 }
 
@@ -1173,11 +1376,34 @@ extension HNSWIndex {
             shouldRebuildGraph = state.connections.hasAnyConnection(for: existing.internalID)
         } else {
             if state.entries.count < state.maximumElementCount {
+                let nextNodeCount = state.labelOrder.count + 1
+                let constructionCapacity = min(
+                    configuration.efConstruction,
+                    nextNodeCount
+                )
+                try HNSWSearchWorkspace.validateRetainedCapacity(
+                    candidateCapacity: nextNodeCount,
+                    nearestCapacity: constructionCapacity,
+                    resultCapacity: 1,
+                    visitedCapacity: nextNodeCount
+                )
                 let internalID = HNSWInternalID(state.labelOrder.count)
                 let offset = Scalar.self == Float16.self
                     ? state.halfComparisonStorage.count
                     : state.comparisonStorage.count
-                let level = state.levelGenerator.randomLevel(multiplier: levelMultiplier)
+                guard offset <= Int.max - dimensions else {
+                    throw HNSWError.addPointFailed(
+                        "Vector storage exceeds the addressable range"
+                    )
+                }
+                var levelGenerator = state.levelGenerator
+                let level = levelGenerator.randomLevel(multiplier: levelMultiplier)
+                try validateGraphRetainedCapacity(
+                    nodeCount: nextNodeCount,
+                    additionalUpperLevelSlotCount: level,
+                    state: state
+                )
+                state.levelGenerator = levelGenerator
                 entry = Entry(internalID: internalID, offset: offset, deleted: false, level: level)
                 if Scalar.self == Float16.self {
                     for _ in 0..<dimensions {
@@ -1197,7 +1423,20 @@ extension HNSWIndex {
                 shouldRebuildGraph = false
             } else if configuration.allowReplaceDeleted,
                       let reusable = reusableDeletedEntry(state: state) {
-                let level = state.levelGenerator.randomLevel(multiplier: levelMultiplier)
+                var levelGenerator = state.levelGenerator
+                let level = levelGenerator.randomLevel(multiplier: levelMultiplier)
+                let oldLevelCount = state.connections.levelCount(
+                    for: reusable.entry.internalID
+                )
+                let additionalUpperLevelSlotCount = level + 1 > oldLevelCount
+                    ? level
+                    : 0
+                try validateGraphRetainedCapacity(
+                    nodeCount: state.labelOrder.count,
+                    additionalUpperLevelSlotCount: additionalUpperLevelSlotCount,
+                    state: state
+                )
+                state.levelGenerator = levelGenerator
                 entry = Entry(
                     internalID: reusable.entry.internalID,
                     offset: reusable.entry.offset,
@@ -1248,6 +1487,42 @@ extension HNSWIndex {
         }
     }
 
+    private func validateGraphRetainedCapacity(
+        nodeCount: Int,
+        additionalUpperLevelSlotCount: Int,
+        state: borrowing State
+    ) throws {
+        let (upperLevelSlotCount, upperLevelCountOverflowed) =
+            state.connections.totalUpperLevelSlotCount.addingReportingOverflow(
+                additionalUpperLevelSlotCount
+            )
+        guard !upperLevelCountOverflowed,
+              let retainedByteCount = HNSWConnectionStore.retainedByteCount(
+                  nodeCount: nodeCount,
+                  totalUpperLevelSlotCount: upperLevelSlotCount,
+                  m: configuration.m
+              ) else {
+            throw HNSWError.addPointFailed(
+                "Graph storage exceeds the addressable range"
+            )
+        }
+        guard retainedByteCount <= HNSWConnectionStore.maximumRetainedByteCount else {
+            throw HNSWError.addPointFailed(
+                "Graph storage exceeds the 256 MiB limit"
+            )
+        }
+    }
+
+    private func validateSearchWorkspace(k: Int, state: borrowing State) throws {
+        let nodeCount = state.labelOrder.count
+        try HNSWSearchWorkspace.validateRetainedCapacity(
+            candidateCapacity: nodeCount,
+            nearestCapacity: min(max(state.efSearch, k), nodeCount),
+            resultCapacity: min(k, nodeCount),
+            visitedCapacity: nodeCount
+        )
+    }
+
     private func searchNormalized(
         _ query: UnsafeBufferPointer<Float>,
         k: Int,
@@ -1264,7 +1539,8 @@ extension HNSWIndex {
             initializedCount = state.searchWorkspace.withCandidateBuffers(
                 candidateCapacity: candidateCapacity,
                 nearestCapacity: nearestCapacity,
-                resultCapacity: resultCapacity
+                resultCapacity: resultCapacity,
+                visitedCapacity: nodeCount
             ) { candidateQueueStorage, nearestCandidateStorage, resultCandidateStorage in
                 state.visited.withUnsafeMutableBufferPointer { visited in
                     state.comparisonStorage.withUnsafeBufferPointer { storage in
@@ -1334,7 +1610,8 @@ extension HNSWIndex {
         let resultCount = state.searchWorkspace.withCandidateBuffers(
             candidateCapacity: candidateCapacity,
             nearestCapacity: nearestCapacity,
-            resultCapacity: resultCapacity
+            resultCapacity: resultCapacity,
+            visitedCapacity: nodeCount
         ) { candidateQueueStorage, nearestCandidateStorage, resultCandidateStorage in
             state.visited.withUnsafeMutableBufferPointer { visited in
                 state.comparisonStorage.withUnsafeBufferPointer { storage in
@@ -1403,7 +1680,8 @@ extension HNSWIndex {
             initializedCount = state.searchWorkspace.withCandidateBuffers(
                 candidateCapacity: candidateCapacity,
                 nearestCapacity: nearestCapacity,
-                resultCapacity: resultCapacity
+                resultCapacity: resultCapacity,
+                visitedCapacity: nodeCount
             ) { candidateQueueStorage, nearestCandidateStorage, resultCandidateStorage in
                 state.visited.withUnsafeMutableBufferPointer { visited in
                     state.halfComparisonStorage.withUnsafeBufferPointer { storage in
@@ -1473,7 +1751,8 @@ extension HNSWIndex {
         let resultCount = state.searchWorkspace.withCandidateBuffers(
             candidateCapacity: candidateCapacity,
             nearestCapacity: nearestCapacity,
-            resultCapacity: resultCapacity
+            resultCapacity: resultCapacity,
+            visitedCapacity: nodeCount
         ) { candidateQueueStorage, nearestCandidateStorage, resultCandidateStorage in
             state.visited.withUnsafeMutableBufferPointer { visited in
                 state.halfComparisonStorage.withUnsafeBufferPointer { storage in
@@ -1810,7 +2089,8 @@ extension HNSWIndex {
                 let nearestCapacity = max(1, min(efConstruction, nodeCount))
                 var candidates = state.searchWorkspace.withCandidateBuffers(
                     candidateCapacity: candidateCapacity,
-                    nearestCapacity: nearestCapacity
+                    nearestCapacity: nearestCapacity,
+                    visitedCapacity: nodeCount
                 ) { candidateQueueStorage, nearestCandidateStorage, _ in
                     state.visited.withUnsafeMutableBufferPointer { visited in
                         searchLayerForNode(
@@ -2711,6 +2991,26 @@ extension HNSWIndex {
             ($0.comparisonStorage.count, $0.halfComparisonStorage.count)
         }
     }
+
+    /// Captures the graph topology for an internal distance backend.
+    ///
+    /// The returned snapshot may outlive this index and can be paired with a different
+    /// immutable vector representation, such as packed TurboQuant codes. Array storage in
+    /// the flat connection store remains copy-on-write. The snapshot is intentionally
+    /// internal; public callers continue to use `search` and `serializedArchive` instead of
+    /// depending on graph layout.
+    func graphSnapshot() -> HNSWGraphSnapshot {
+        state.withLock { state in
+            HNSWGraphSnapshot(
+                labelOrder: state.labelOrder,
+                deletedFlags: state.deletedFlags,
+                levels: state.levels,
+                connections: state.connections,
+                entryPoint: state.entryPoint,
+                maxLevel: state.maxLevel
+            )
+        }
+    }
 }
 
 private struct HNSWArchiveWriter {
@@ -2762,6 +3062,10 @@ private struct HNSWArchiveReader {
 
     let bytes: UnsafeRawBufferPointer
     var offset = 0
+
+    var remainingByteCount: Int {
+        bytes.count - offset
+    }
 
     mutating func readMagic() throws -> UInt64 {
         let magic = try readUInt64()
@@ -2819,14 +3123,23 @@ private struct HNSWArchiveReader {
         )
     }
 
+    mutating func readIntFromUInt32(name: String) throws -> Int {
+        let value = try readUInt32()
+        guard UInt64(value) <= UInt64(Int.max) else {
+            throw HNSWError.loadFailed(
+                "Flat index contains an out-of-range \(name)"
+            )
+        }
+        return Int(value)
+    }
+
     mutating func readFloat() throws -> Float {
         Float(bitPattern: try readUInt32())
     }
 
     mutating func readString() throws -> String {
-        let count = Int(try readUInt32())
-        guard count >= 0,
-              bytes.count >= count,
+        let count = try readIntFromUInt32(name: "string length")
+        guard bytes.count >= count,
               offset <= bytes.count - count else {
             throw HNSWError.loadFailed("Flat index data is truncated")
         }

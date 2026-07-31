@@ -1,6 +1,13 @@
 /// Configuration for HNSW index
 public struct HNSWConfiguration: Sendable, Hashable {
-    /// Maximum number of connections per element (default: 16, minimum: 2)
+    /// Largest supported `m` value.
+    ///
+    /// The connection store retains `2 * m + 1` level-zero slots per indexed
+    /// element. Bounding `m` prevents a single element or malformed archive
+    /// from requesting an unbounded allocation.
+    public static let maximumM = 10_000
+
+    /// Maximum number of connections per element (default: 16, range: 2...10,000)
     /// Higher values improve recall but increase memory and build time
     public var m: Int
 

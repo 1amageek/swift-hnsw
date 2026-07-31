@@ -16,9 +16,12 @@ enum BitPacking {
     ///
     /// - Parameters:
     ///   - indices: Array of indices, each in range [0, 2^bitWidth).
-    ///   - bitWidth: Bits per index (1, 2, 3, or 4).
+    ///   - bitWidth: Bits per index (0, 1, 2, 3, or 4).
     /// - Returns: Packed byte array.
     static func pack(_ indices: [UInt8], bitWidth: Int) -> [UInt8] {
+        guard bitWidth > 0 else {
+            return []
+        }
         let count = indices.count
         let outputSize = packedSize(count: count, bitWidth: bitWidth)
         var output = [UInt8](repeating: 0, count: outputSize)
@@ -47,6 +50,9 @@ enum BitPacking {
     ///   - count: Number of indices to unpack.
     /// - Returns: Array of unpacked indices.
     static func unpack(_ packed: [UInt8], bitWidth: Int, count: Int) -> [UInt8] {
+        guard bitWidth > 0 else {
+            return [UInt8](repeating: 0, count: count)
+        }
         var output = [UInt8](repeating: 0, count: count)
 
         switch bitWidth {
@@ -63,6 +69,101 @@ enum BitPacking {
         }
 
         return output
+    }
+
+    /// Reads one packed index without allocating an intermediate unpacked buffer.
+    ///
+    /// The bit order matches the format used by `pack`: 1-, 2-, and 4-bit values are
+    /// stored most-significant first within each byte; 3-bit values use the historical
+    /// little-endian bit stream so that eight values occupy three bytes.
+    @inline(__always)
+    static func value(
+        at index: Int,
+        from packed: UnsafeBufferPointer<UInt8>,
+        bitWidth: Int
+    ) -> UInt8 {
+        switch bitWidth {
+        case 0:
+            return 0
+        case 4:
+            let byte = packed[index >> 1]
+            return index & 1 == 0 ? byte >> 4 : byte & 0x0F
+        case 2:
+            let byte = packed[index >> 2]
+            let shift = 6 - ((index & 3) * 2)
+            return (byte >> shift) & 0x03
+        case 1:
+            let byte = packed[index >> 3]
+            return (byte >> (7 - (index & 7))) & 0x01
+        case 3:
+            let bitOffset = index * 3
+            let byteIndex = bitOffset >> 3
+            let bitInByte = bitOffset & 7
+            var value = packed[byteIndex] >> bitInByte
+            if bitInByte > 5 {
+                value |= packed[byteIndex + 1] << (8 - bitInByte)
+            }
+            return value & 0x07
+        default:
+            let mask = UInt8((1 << bitWidth) - 1)
+            let bitOffset = index * bitWidth
+            let byteIndex = bitOffset >> 3
+            let bitInByte = bitOffset & 7
+            var value = packed[byteIndex] >> bitInByte
+            if bitInByte + bitWidth > 8 {
+                value |= packed[byteIndex + 1] << (8 - bitInByte)
+            }
+            return value & mask
+        }
+    }
+
+    /// Stores one index in an already zero-initialized packed buffer.
+    ///
+    /// This is the allocation-free insertion primitive used by the production quantizer.
+    /// The caller must write each logical index at most once.
+    @inline(__always)
+    static func store(
+        _ value: UInt8,
+        at index: Int,
+        in packed: UnsafeMutableBufferPointer<UInt8>,
+        bitWidth: Int
+    ) {
+        switch bitWidth {
+        case 0:
+            return
+        case 4:
+            let byteIndex = index >> 1
+            if index & 1 == 0 {
+                packed[byteIndex] |= (value & 0x0F) << 4
+            } else {
+                packed[byteIndex] |= value & 0x0F
+            }
+        case 2:
+            let byteIndex = index >> 2
+            packed[byteIndex] |= (value & 0x03) << (6 - (index & 3) * 2)
+        case 1:
+            let byteIndex = index >> 3
+            packed[byteIndex] |= (value & 0x01) << (7 - (index & 7))
+        case 3:
+            let bitOffset = index * 3
+            let byteIndex = bitOffset >> 3
+            let bitInByte = bitOffset & 7
+            let storedValue = value & 0x07
+            packed[byteIndex] |= storedValue << bitInByte
+            if bitInByte > 5 {
+                packed[byteIndex + 1] |= storedValue >> (8 - bitInByte)
+            }
+        default:
+            let mask = UInt8((1 << bitWidth) - 1)
+            let bitOffset = index * bitWidth
+            let byteIndex = bitOffset >> 3
+            let bitInByte = bitOffset & 7
+            let storedValue = value & mask
+            packed[byteIndex] |= storedValue << bitInByte
+            if bitInByte + bitWidth > 8 {
+                packed[byteIndex + 1] |= storedValue >> (8 - bitInByte)
+            }
+        }
     }
 
     // MARK: - 4-bit (Nibble) Packing

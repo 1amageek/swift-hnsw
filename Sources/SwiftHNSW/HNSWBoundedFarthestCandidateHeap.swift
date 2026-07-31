@@ -118,6 +118,42 @@ struct HNSWBoundedFarthestCandidateHeap {
         )
     }
 
+    mutating func writeClosestReranked(
+        limit: Int,
+        using resultStorage: UnsafeMutableBufferPointer<HNSWNeighborCandidate>,
+        to results: UnsafeMutableBufferPointer<SearchResult>,
+        labelOrder: borrowing [UInt64],
+        metric: DistanceMetric,
+        isEligible: (HNSWInternalID) -> Bool,
+        comparisonDistance: (HNSWNeighborCandidate) -> Float
+    ) -> Int {
+        guard limit > 0, count > 0, results.count > 0 else { return 0 }
+        let boundedLimit = min(limit, resultStorage.count, results.count)
+        var topK = HNSWBoundedFarthestCandidateHeap(storage: resultStorage)
+
+        for index in 0..<count {
+            let element = storage[index]
+            guard isEligible(element.internalID) else { continue }
+            let reranked = HNSWNeighborCandidate(
+                internalID: element.internalID,
+                distance: comparisonDistance(element)
+            )
+            if topK.count < boundedLimit {
+                topK.pushUnchecked(reranked)
+            } else if isCloserHNSWCandidate(reranked, than: topK.topUnchecked) {
+                topK.replaceTopUnchecked(with: reranked)
+            }
+        }
+
+        topK.sortStoredElements()
+        return topK.writeStoredElements(
+            limit: boundedLimit,
+            to: results,
+            labelOrder: labelOrder,
+            metric: metric
+        )
+    }
+
     private mutating func sortStoredElements() {
         guard count > 1 else { return }
         var sortedStorage = UnsafeMutableBufferPointer(start: storage.baseAddress!, count: count)

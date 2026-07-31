@@ -1,0 +1,402 @@
+turboquant_benchmark toolchain_identifier=org.swift.64202607231a
+turboquant_benchmark compiler=Apple_Swift_version_6.4-dev_(LLVM_264fd65923c28d9,_Swift_ef761e567dc94ee)_Target:_arm64-apple-macosx27.0.0_Build_config:_+assertions
+turboquant_benchmark comparison=HNSW cosine vs TurboQuant MSE and product objectives
+turboquant_benchmark run_id=2026-07-31-d768-cycle3-product5
+turboquant_benchmark source_revision=a1f7ec0a847fd871a32af13b7c89a2e5b7ee67bd
+turboquant_benchmark source_state=dirty
+turboquant_benchmark measurement_mode=isolated target=turboquant-product-5
+
+case=n10k-d768 n=10000 d=768 q=50 k=10
+build index=turboquant-product bits=5 ms=7115.382 input_vector_bytes=30720000 retained_packed_record_bytes=6120000 shared_projection_bytes=2359296
+sample phase=batch index=turboquant-product bits=5 ef=10 trial=0 wall_ms=8.086 cpu_ms=8.086 checksum=2130633
+sample phase=batch index=turboquant-product bits=5 ef=10 trial=1 wall_ms=7.934 cpu_ms=7.933 checksum=2130634
+sample phase=batch index=turboquant-product bits=5 ef=10 trial=2 wall_ms=7.988 cpu_ms=7.991 checksum=2130635
+sample phase=batch index=turboquant-product bits=5 ef=10 trial=3 wall_ms=7.717 cpu_ms=7.717 checksum=2130636
+sample phase=batch index=turboquant-product bits=5 ef=10 trial=4 wall_ms=7.805 cpu_ms=7.805 checksum=2130637
+sample phase=query index=turboquant-product bits=5 ef=10 query=0 wall_ms=0.138 checksum=54716
+sample phase=query index=turboquant-product bits=5 ef=10 query=1 wall_ms=0.135 checksum=47241
+sample phase=query index=turboquant-product bits=5 ef=10 query=2 wall_ms=0.147 checksum=46464
+sample phase=query index=turboquant-product bits=5 ef=10 query=3 wall_ms=0.154 checksum=33695
+sample phase=query index=turboquant-product bits=5 ef=10 query=4 wall_ms=0.143 checksum=32937
+sample phase=query index=turboquant-product bits=5 ef=10 query=5 wall_ms=0.174 checksum=43201
+sample phase=query index=turboquant-product bits=5 ef=10 query=6 wall_ms=0.173 checksum=40438
+sample phase=query index=turboquant-product bits=5 ef=10 query=7 wall_ms=0.160 checksum=43572
+sample phase=query index=turboquant-product bits=5 ef=10 query=8 wall_ms=0.168 checksum=28116
+sample phase=query index=turboquant-product bits=5 ef=10 query=9 wall_ms=0.196 checksum=47730
+sample phase=query index=turboquant-product bits=5 ef=10 query=10 wall_ms=0.176 checksum=27123
+sample phase=query index=turboquant-product bits=5 ef=10 query=11 wall_ms=0.160 checksum=42531
+sample phase=query index=turboquant-product bits=5 ef=10 query=12 wall_ms=0.136 checksum=43478
+sample phase=query index=turboquant-product bits=5 ef=10 query=13 wall_ms=0.177 checksum=55933
+sample phase=query index=turboquant-product bits=5 ef=10 query=14 wall_ms=0.166 checksum=40032
+sample phase=query index=turboquant-product bits=5 ef=10 query=15 wall_ms=0.152 checksum=40868
+sample phase=query index=turboquant-product bits=5 ef=10 query=16 wall_ms=0.149 checksum=44098
+sample phase=query index=turboquant-product bits=5 ef=10 query=17 wall_ms=0.171 checksum=57933
+sample phase=query index=turboquant-product bits=5 ef=10 query=18 wall_ms=0.168 checksum=40873
+sample phase=query index=turboquant-product bits=5 ef=10 query=19 wall_ms=0.139 checksum=34811
+sample phase=query index=turboquant-product bits=5 ef=10 query=20 wall_ms=0.177 checksum=45117
+sample phase=query index=turboquant-product bits=5 ef=10 query=21 wall_ms=0.144 checksum=44910
+sample phase=query index=turboquant-product bits=5 ef=10 query=22 wall_ms=0.160 checksum=29051
+sample phase=query index=turboquant-product bits=5 ef=10 query=23 wall_ms=0.164 checksum=56426
+sample phase=query index=turboquant-product bits=5 ef=10 query=24 wall_ms=0.138 checksum=49657
+sample phase=query index=turboquant-product bits=5 ef=10 query=25 wall_ms=0.160 checksum=26550
+sample phase=query index=turboquant-product bits=5 ef=10 query=26 wall_ms=0.131 checksum=40356
+sample phase=query index=turboquant-product bits=5 ef=10 query=27 wall_ms=0.146 checksum=52159
+sample phase=query index=turboquant-product bits=5 ef=10 query=28 wall_ms=0.140 checksum=35647
+sample phase=query index=turboquant-product bits=5 ef=10 query=29 wall_ms=0.158 checksum=32786
+sample phase=query index=turboquant-product bits=5 ef=10 query=30 wall_ms=0.147 checksum=39779
+sample phase=query index=turboquant-product bits=5 ef=10 query=31 wall_ms=0.177 checksum=48245
+sample phase=query index=turboquant-product bits=5 ef=10 query=32 wall_ms=0.134 checksum=52226
+sample phase=query index=turboquant-product bits=5 ef=10 query=33 wall_ms=0.137 checksum=27129
+sample phase=query index=turboquant-product bits=5 ef=10 query=34 wall_ms=0.159 checksum=38726
+sample phase=query index=turboquant-product bits=5 ef=10 query=35 wall_ms=0.135 checksum=33577
+sample phase=query index=turboquant-product bits=5 ef=10 query=36 wall_ms=0.192 checksum=39685
+sample phase=query index=turboquant-product bits=5 ef=10 query=37 wall_ms=0.180 checksum=27103
+sample phase=query index=turboquant-product bits=5 ef=10 query=38 wall_ms=0.142 checksum=51488
+sample phase=query index=turboquant-product bits=5 ef=10 query=39 wall_ms=0.172 checksum=57489
+sample phase=query index=turboquant-product bits=5 ef=10 query=40 wall_ms=0.151 checksum=45536
+sample phase=query index=turboquant-product bits=5 ef=10 query=41 wall_ms=0.198 checksum=45319
+sample phase=query index=turboquant-product bits=5 ef=10 query=42 wall_ms=0.141 checksum=52755
+sample phase=query index=turboquant-product bits=5 ef=10 query=43 wall_ms=0.134 checksum=55341
+sample phase=query index=turboquant-product bits=5 ef=10 query=44 wall_ms=0.157 checksum=47987
+sample phase=query index=turboquant-product bits=5 ef=10 query=45 wall_ms=0.162 checksum=39662
+sample phase=query index=turboquant-product bits=5 ef=10 query=46 wall_ms=0.168 checksum=29337
+sample phase=query index=turboquant-product bits=5 ef=10 query=47 wall_ms=0.166 checksum=52628
+sample phase=query index=turboquant-product bits=5 ef=10 query=48 wall_ms=0.158 checksum=52607
+sample phase=query index=turboquant-product bits=5 ef=10 query=49 wall_ms=0.160 checksum=35565
+search index=turboquant-product bits=5 ef=10 median_ms_per_query=0.159 p95_ms_per_query=0.192 qps=6302.256 cpu_ms_per_query=0.159 cpu_qps=6302.786 recall_at_10=0.082 checksum=12783808
+sample phase=batch index=turboquant-product bits=5 ef=20 trial=0 wall_ms=11.235 cpu_ms=11.236 checksum=2165943
+sample phase=batch index=turboquant-product bits=5 ef=20 trial=1 wall_ms=11.128 cpu_ms=11.128 checksum=2165944
+sample phase=batch index=turboquant-product bits=5 ef=20 trial=2 wall_ms=11.082 cpu_ms=11.012 checksum=2165945
+sample phase=batch index=turboquant-product bits=5 ef=20 trial=3 wall_ms=10.885 cpu_ms=10.884 checksum=2165946
+sample phase=batch index=turboquant-product bits=5 ef=20 trial=4 wall_ms=10.837 cpu_ms=10.837 checksum=2165947
+sample phase=query index=turboquant-product bits=5 ef=20 query=0 wall_ms=0.183 checksum=57233
+sample phase=query index=turboquant-product bits=5 ef=20 query=1 wall_ms=0.187 checksum=41694
+sample phase=query index=turboquant-product bits=5 ef=20 query=2 wall_ms=0.223 checksum=51867
+sample phase=query index=turboquant-product bits=5 ef=20 query=3 wall_ms=0.240 checksum=30826
+sample phase=query index=turboquant-product bits=5 ef=20 query=4 wall_ms=0.202 checksum=21123
+sample phase=query index=turboquant-product bits=5 ef=20 query=5 wall_ms=0.216 checksum=48196
+sample phase=query index=turboquant-product bits=5 ef=20 query=6 wall_ms=0.183 checksum=45269
+sample phase=query index=turboquant-product bits=5 ef=20 query=7 wall_ms=0.190 checksum=38210
+sample phase=query index=turboquant-product bits=5 ef=20 query=8 wall_ms=0.238 checksum=40406
+sample phase=query index=turboquant-product bits=5 ef=20 query=9 wall_ms=0.248 checksum=51575
+sample phase=query index=turboquant-product bits=5 ef=20 query=10 wall_ms=0.230 checksum=29376
+sample phase=query index=turboquant-product bits=5 ef=20 query=11 wall_ms=0.255 checksum=28536
+sample phase=query index=turboquant-product bits=5 ef=20 query=12 wall_ms=0.232 checksum=43221
+sample phase=query index=turboquant-product bits=5 ef=20 query=13 wall_ms=0.225 checksum=44656
+sample phase=query index=turboquant-product bits=5 ef=20 query=14 wall_ms=0.203 checksum=40032
+sample phase=query index=turboquant-product bits=5 ef=20 query=15 wall_ms=0.229 checksum=25803
+sample phase=query index=turboquant-product bits=5 ef=20 query=16 wall_ms=0.221 checksum=34060
+sample phase=query index=turboquant-product bits=5 ef=20 query=17 wall_ms=0.223 checksum=48925
+sample phase=query index=turboquant-product bits=5 ef=20 query=18 wall_ms=0.293 checksum=33885
+sample phase=query index=turboquant-product bits=5 ef=20 query=19 wall_ms=0.223 checksum=42689
+sample phase=query index=turboquant-product bits=5 ef=20 query=20 wall_ms=0.222 checksum=49734
+sample phase=query index=turboquant-product bits=5 ef=20 query=21 wall_ms=0.249 checksum=42565
+sample phase=query index=turboquant-product bits=5 ef=20 query=22 wall_ms=0.193 checksum=35085
+sample phase=query index=turboquant-product bits=5 ef=20 query=23 wall_ms=0.195 checksum=59334
+sample phase=query index=turboquant-product bits=5 ef=20 query=24 wall_ms=0.184 checksum=53801
+sample phase=query index=turboquant-product bits=5 ef=20 query=25 wall_ms=0.193 checksum=26550
+sample phase=query index=turboquant-product bits=5 ef=20 query=26 wall_ms=0.195 checksum=52080
+sample phase=query index=turboquant-product bits=5 ef=20 query=27 wall_ms=0.205 checksum=37073
+sample phase=query index=turboquant-product bits=5 ef=20 query=28 wall_ms=0.226 checksum=43890
+sample phase=query index=turboquant-product bits=5 ef=20 query=29 wall_ms=0.237 checksum=33093
+sample phase=query index=turboquant-product bits=5 ef=20 query=30 wall_ms=0.243 checksum=41163
+sample phase=query index=turboquant-product bits=5 ef=20 query=31 wall_ms=0.220 checksum=49841
+sample phase=query index=turboquant-product bits=5 ef=20 query=32 wall_ms=0.188 checksum=64095
+sample phase=query index=turboquant-product bits=5 ef=20 query=33 wall_ms=0.183 checksum=40477
+sample phase=query index=turboquant-product bits=5 ef=20 query=34 wall_ms=0.217 checksum=44018
+sample phase=query index=turboquant-product bits=5 ef=20 query=35 wall_ms=0.222 checksum=35396
+sample phase=query index=turboquant-product bits=5 ef=20 query=36 wall_ms=0.251 checksum=35245
+sample phase=query index=turboquant-product bits=5 ef=20 query=37 wall_ms=0.264 checksum=28847
+sample phase=query index=turboquant-product bits=5 ef=20 query=38 wall_ms=0.233 checksum=56879
+sample phase=query index=turboquant-product bits=5 ef=20 query=39 wall_ms=0.192 checksum=57489
+sample phase=query index=turboquant-product bits=5 ef=20 query=40 wall_ms=0.205 checksum=47158
+sample phase=query index=turboquant-product bits=5 ef=20 query=41 wall_ms=0.261 checksum=52167
+sample phase=query index=turboquant-product bits=5 ef=20 query=42 wall_ms=0.210 checksum=43687
+sample phase=query index=turboquant-product bits=5 ef=20 query=43 wall_ms=0.191 checksum=60277
+sample phase=query index=turboquant-product bits=5 ef=20 query=44 wall_ms=0.260 checksum=36588
+sample phase=query index=turboquant-product bits=5 ef=20 query=45 wall_ms=0.211 checksum=55846
+sample phase=query index=turboquant-product bits=5 ef=20 query=46 wall_ms=0.275 checksum=36975
+sample phase=query index=turboquant-product bits=5 ef=20 query=47 wall_ms=0.214 checksum=53179
+sample phase=query index=turboquant-product bits=5 ef=20 query=48 wall_ms=0.224 checksum=52689
+sample phase=query index=turboquant-product bits=5 ef=20 query=49 wall_ms=0.232 checksum=43140
+search index=turboquant-product bits=5 ef=20 median_ms_per_query=0.222 p95_ms_per_query=0.264 qps=4511.685 cpu_ms_per_query=0.220 cpu_qps=4540.501 recall_at_10=0.150 checksum=12995668
+sample phase=batch index=turboquant-product bits=5 ef=40 trial=0 wall_ms=28.232 cpu_ms=28.224 checksum=2064910
+sample phase=batch index=turboquant-product bits=5 ef=40 trial=1 wall_ms=28.518 cpu_ms=28.510 checksum=2064911
+sample phase=batch index=turboquant-product bits=5 ef=40 trial=2 wall_ms=27.705 cpu_ms=27.705 checksum=2064912
+sample phase=batch index=turboquant-product bits=5 ef=40 trial=3 wall_ms=28.700 cpu_ms=28.661 checksum=2064913
+sample phase=batch index=turboquant-product bits=5 ef=40 trial=4 wall_ms=29.394 cpu_ms=29.372 checksum=2064914
+sample phase=query index=turboquant-product bits=5 ef=40 query=0 wall_ms=0.647 checksum=56602
+sample phase=query index=turboquant-product bits=5 ef=40 query=1 wall_ms=0.659 checksum=22362
+sample phase=query index=turboquant-product bits=5 ef=40 query=2 wall_ms=0.587 checksum=47809
+sample phase=query index=turboquant-product bits=5 ef=40 query=3 wall_ms=0.618 checksum=36849
+sample phase=query index=turboquant-product bits=5 ef=40 query=4 wall_ms=0.692 checksum=33648
+sample phase=query index=turboquant-product bits=5 ef=40 query=5 wall_ms=0.626 checksum=43831
+sample phase=query index=turboquant-product bits=5 ef=40 query=6 wall_ms=0.745 checksum=50632
+sample phase=query index=turboquant-product bits=5 ef=40 query=7 wall_ms=0.587 checksum=36494
+sample phase=query index=turboquant-product bits=5 ef=40 query=8 wall_ms=0.600 checksum=33200
+sample phase=query index=turboquant-product bits=5 ef=40 query=9 wall_ms=0.597 checksum=51575
+sample phase=query index=turboquant-product bits=5 ef=40 query=10 wall_ms=0.689 checksum=46264
+sample phase=query index=turboquant-product bits=5 ef=40 query=11 wall_ms=0.628 checksum=30544
+sample phase=query index=turboquant-product bits=5 ef=40 query=12 wall_ms=0.619 checksum=31090
+sample phase=query index=turboquant-product bits=5 ef=40 query=13 wall_ms=0.581 checksum=44019
+sample phase=query index=turboquant-product bits=5 ef=40 query=14 wall_ms=0.726 checksum=35978
+sample phase=query index=turboquant-product bits=5 ef=40 query=15 wall_ms=0.588 checksum=25803
+sample phase=query index=turboquant-product bits=5 ef=40 query=16 wall_ms=0.705 checksum=38488
+sample phase=query index=turboquant-product bits=5 ef=40 query=17 wall_ms=0.590 checksum=47412
+sample phase=query index=turboquant-product bits=5 ef=40 query=18 wall_ms=0.696 checksum=33915
+sample phase=query index=turboquant-product bits=5 ef=40 query=19 wall_ms=0.702 checksum=31435
+sample phase=query index=turboquant-product bits=5 ef=40 query=20 wall_ms=0.673 checksum=41393
+sample phase=query index=turboquant-product bits=5 ef=40 query=21 wall_ms=0.683 checksum=27896
+sample phase=query index=turboquant-product bits=5 ef=40 query=22 wall_ms=0.613 checksum=38699
+sample phase=query index=turboquant-product bits=5 ef=40 query=23 wall_ms=0.703 checksum=48643
+sample phase=query index=turboquant-product bits=5 ef=40 query=24 wall_ms=0.694 checksum=29707
+sample phase=query index=turboquant-product bits=5 ef=40 query=25 wall_ms=0.653 checksum=24754
+sample phase=query index=turboquant-product bits=5 ef=40 query=26 wall_ms=0.550 checksum=49122
+sample phase=query index=turboquant-product bits=5 ef=40 query=27 wall_ms=0.596 checksum=32144
+sample phase=query index=turboquant-product bits=5 ef=40 query=28 wall_ms=0.595 checksum=47926
+sample phase=query index=turboquant-product bits=5 ef=40 query=29 wall_ms=0.594 checksum=37358
+sample phase=query index=turboquant-product bits=5 ef=40 query=30 wall_ms=0.612 checksum=38248
+sample phase=query index=turboquant-product bits=5 ef=40 query=31 wall_ms=0.679 checksum=42312
+sample phase=query index=turboquant-product bits=5 ef=40 query=32 wall_ms=0.633 checksum=48515
+sample phase=query index=turboquant-product bits=5 ef=40 query=33 wall_ms=0.561 checksum=47270
+sample phase=query index=turboquant-product bits=5 ef=40 query=34 wall_ms=0.577 checksum=42582
+sample phase=query index=turboquant-product bits=5 ef=40 query=35 wall_ms=0.612 checksum=49167
+sample phase=query index=turboquant-product bits=5 ef=40 query=36 wall_ms=0.630 checksum=42204
+sample phase=query index=turboquant-product bits=5 ef=40 query=37 wall_ms=0.609 checksum=34913
+sample phase=query index=turboquant-product bits=5 ef=40 query=38 wall_ms=0.679 checksum=57806
+sample phase=query index=turboquant-product bits=5 ef=40 query=39 wall_ms=0.531 checksum=62761
+sample phase=query index=turboquant-product bits=5 ef=40 query=40 wall_ms=0.556 checksum=41678
+sample phase=query index=turboquant-product bits=5 ef=40 query=41 wall_ms=0.601 checksum=50013
+sample phase=query index=turboquant-product bits=5 ef=40 query=42 wall_ms=0.516 checksum=50898
+sample phase=query index=turboquant-product bits=5 ef=40 query=43 wall_ms=0.594 checksum=64973
+sample phase=query index=turboquant-product bits=5 ef=40 query=44 wall_ms=0.724 checksum=41243
+sample phase=query index=turboquant-product bits=5 ef=40 query=45 wall_ms=0.735 checksum=43605
+sample phase=query index=turboquant-product bits=5 ef=40 query=46 wall_ms=0.603 checksum=31580
+sample phase=query index=turboquant-product bits=5 ef=40 query=47 wall_ms=0.584 checksum=45066
+sample phase=query index=turboquant-product bits=5 ef=40 query=48 wall_ms=0.517 checksum=43940
+sample phase=query index=turboquant-product bits=5 ef=40 query=49 wall_ms=0.610 checksum=30544
+search index=turboquant-product bits=5 ef=40 median_ms_per_query=0.570 p95_ms_per_query=0.726 qps=1753.279 cpu_ms_per_query=0.570 cpu_qps=1753.771 recall_at_10=0.230 checksum=12389470
+sample phase=batch index=turboquant-product bits=5 ef=60 trial=0 wall_ms=36.885 cpu_ms=36.829 checksum=2087438
+sample phase=batch index=turboquant-product bits=5 ef=60 trial=1 wall_ms=37.001 cpu_ms=37.002 checksum=2087439
+sample phase=batch index=turboquant-product bits=5 ef=60 trial=2 wall_ms=37.491 cpu_ms=37.323 checksum=2087440
+sample phase=batch index=turboquant-product bits=5 ef=60 trial=3 wall_ms=36.323 cpu_ms=36.320 checksum=2087441
+sample phase=batch index=turboquant-product bits=5 ef=60 trial=4 wall_ms=35.907 cpu_ms=35.907 checksum=2087442
+sample phase=query index=turboquant-product bits=5 ef=60 query=0 wall_ms=0.700 checksum=62266
+sample phase=query index=turboquant-product bits=5 ef=60 query=1 wall_ms=0.707 checksum=29843
+sample phase=query index=turboquant-product bits=5 ef=60 query=2 wall_ms=0.813 checksum=50363
+sample phase=query index=turboquant-product bits=5 ef=60 query=3 wall_ms=0.681 checksum=36849
+sample phase=query index=turboquant-product bits=5 ef=60 query=4 wall_ms=0.678 checksum=28092
+sample phase=query index=turboquant-product bits=5 ef=60 query=5 wall_ms=0.684 checksum=45814
+sample phase=query index=turboquant-product bits=5 ef=60 query=6 wall_ms=0.758 checksum=47820
+sample phase=query index=turboquant-product bits=5 ef=60 query=7 wall_ms=0.733 checksum=35111
+sample phase=query index=turboquant-product bits=5 ef=60 query=8 wall_ms=0.735 checksum=45332
+sample phase=query index=turboquant-product bits=5 ef=60 query=9 wall_ms=0.781 checksum=49298
+sample phase=query index=turboquant-product bits=5 ef=60 query=10 wall_ms=0.749 checksum=32547
+sample phase=query index=turboquant-product bits=5 ef=60 query=11 wall_ms=0.690 checksum=40315
+sample phase=query index=turboquant-product bits=5 ef=60 query=12 wall_ms=0.770 checksum=26995
+sample phase=query index=turboquant-product bits=5 ef=60 query=13 wall_ms=0.641 checksum=38892
+sample phase=query index=turboquant-product bits=5 ef=60 query=14 wall_ms=0.708 checksum=35978
+sample phase=query index=turboquant-product bits=5 ef=60 query=15 wall_ms=0.714 checksum=26440
+sample phase=query index=turboquant-product bits=5 ef=60 query=16 wall_ms=0.830 checksum=38607
+sample phase=query index=turboquant-product bits=5 ef=60 query=17 wall_ms=0.690 checksum=43643
+sample phase=query index=turboquant-product bits=5 ef=60 query=18 wall_ms=0.770 checksum=44645
+sample phase=query index=turboquant-product bits=5 ef=60 query=19 wall_ms=0.717 checksum=33580
+sample phase=query index=turboquant-product bits=5 ef=60 query=20 wall_ms=0.724 checksum=42896
+sample phase=query index=turboquant-product bits=5 ef=60 query=21 wall_ms=0.738 checksum=33312
+sample phase=query index=turboquant-product bits=5 ef=60 query=22 wall_ms=0.666 checksum=32446
+sample phase=query index=turboquant-product bits=5 ef=60 query=23 wall_ms=0.756 checksum=54882
+sample phase=query index=turboquant-product bits=5 ef=60 query=24 wall_ms=0.874 checksum=29707
+sample phase=query index=turboquant-product bits=5 ef=60 query=25 wall_ms=0.773 checksum=27716
+sample phase=query index=turboquant-product bits=5 ef=60 query=26 wall_ms=0.752 checksum=40270
+sample phase=query index=turboquant-product bits=5 ef=60 query=27 wall_ms=0.713 checksum=39319
+sample phase=query index=turboquant-product bits=5 ef=60 query=28 wall_ms=0.762 checksum=55885
+sample phase=query index=turboquant-product bits=5 ef=60 query=29 wall_ms=0.729 checksum=41648
+sample phase=query index=turboquant-product bits=5 ef=60 query=30 wall_ms=0.704 checksum=38248
+sample phase=query index=turboquant-product bits=5 ef=60 query=31 wall_ms=0.724 checksum=42312
+sample phase=query index=turboquant-product bits=5 ef=60 query=32 wall_ms=0.711 checksum=37907
+sample phase=query index=turboquant-product bits=5 ef=60 query=33 wall_ms=0.787 checksum=38455
+sample phase=query index=turboquant-product bits=5 ef=60 query=34 wall_ms=0.716 checksum=61168
+sample phase=query index=turboquant-product bits=5 ef=60 query=35 wall_ms=0.734 checksum=35639
+sample phase=query index=turboquant-product bits=5 ef=60 query=36 wall_ms=0.677 checksum=42204
+sample phase=query index=turboquant-product bits=5 ef=60 query=37 wall_ms=0.681 checksum=34913
+sample phase=query index=turboquant-product bits=5 ef=60 query=38 wall_ms=0.707 checksum=56311
+sample phase=query index=turboquant-product bits=5 ef=60 query=39 wall_ms=0.695 checksum=63465
+sample phase=query index=turboquant-product bits=5 ef=60 query=40 wall_ms=0.682 checksum=35283
+sample phase=query index=turboquant-product bits=5 ef=60 query=41 wall_ms=0.843 checksum=46245
+sample phase=query index=turboquant-product bits=5 ef=60 query=42 wall_ms=0.632 checksum=56148
+sample phase=query index=turboquant-product bits=5 ef=60 query=43 wall_ms=0.709 checksum=65497
+sample phase=query index=turboquant-product bits=5 ef=60 query=44 wall_ms=0.910 checksum=26074
+sample phase=query index=turboquant-product bits=5 ef=60 query=45 wall_ms=0.795 checksum=50373
+sample phase=query index=turboquant-product bits=5 ef=60 query=46 wall_ms=0.748 checksum=32105
+sample phase=query index=turboquant-product bits=5 ef=60 query=47 wall_ms=0.731 checksum=56345
+sample phase=query index=turboquant-product bits=5 ef=60 query=48 wall_ms=0.796 checksum=45706
+sample phase=query index=turboquant-product bits=5 ef=60 query=49 wall_ms=0.689 checksum=32529
+search index=turboquant-product bits=5 ef=60 median_ms_per_query=0.738 p95_ms_per_query=0.843 qps=1355.575 cpu_ms_per_query=0.737 cpu_qps=1357.626 recall_at_10=0.296 checksum=12524638
+sample phase=batch index=turboquant-product bits=5 ef=100 trial=0 wall_ms=51.517 cpu_ms=51.471 checksum=2155375
+sample phase=batch index=turboquant-product bits=5 ef=100 trial=1 wall_ms=51.895 cpu_ms=51.875 checksum=2155376
+sample phase=batch index=turboquant-product bits=5 ef=100 trial=2 wall_ms=52.290 cpu_ms=52.245 checksum=2155377
+sample phase=batch index=turboquant-product bits=5 ef=100 trial=3 wall_ms=53.032 cpu_ms=52.959 checksum=2155378
+sample phase=batch index=turboquant-product bits=5 ef=100 trial=4 wall_ms=52.718 cpu_ms=52.686 checksum=2155379
+sample phase=query index=turboquant-product bits=5 ef=100 query=0 wall_ms=1.098 checksum=55363
+sample phase=query index=turboquant-product bits=5 ef=100 query=1 wall_ms=1.096 checksum=46376
+sample phase=query index=turboquant-product bits=5 ef=100 query=2 wall_ms=1.084 checksum=61262
+sample phase=query index=turboquant-product bits=5 ef=100 query=3 wall_ms=1.212 checksum=39121
+sample phase=query index=turboquant-product bits=5 ef=100 query=4 wall_ms=1.155 checksum=33856
+sample phase=query index=turboquant-product bits=5 ef=100 query=5 wall_ms=1.188 checksum=57862
+sample phase=query index=turboquant-product bits=5 ef=100 query=6 wall_ms=1.119 checksum=42774
+sample phase=query index=turboquant-product bits=5 ef=100 query=7 wall_ms=1.020 checksum=33904
+sample phase=query index=turboquant-product bits=5 ef=100 query=8 wall_ms=1.143 checksum=37682
+sample phase=query index=turboquant-product bits=5 ef=100 query=9 wall_ms=1.023 checksum=50022
+sample phase=query index=turboquant-product bits=5 ef=100 query=10 wall_ms=1.159 checksum=45784
+sample phase=query index=turboquant-product bits=5 ef=100 query=11 wall_ms=1.062 checksum=48253
+sample phase=query index=turboquant-product bits=5 ef=100 query=12 wall_ms=1.063 checksum=33948
+sample phase=query index=turboquant-product bits=5 ef=100 query=13 wall_ms=0.990 checksum=35798
+sample phase=query index=turboquant-product bits=5 ef=100 query=14 wall_ms=1.075 checksum=39325
+sample phase=query index=turboquant-product bits=5 ef=100 query=15 wall_ms=1.020 checksum=36549
+sample phase=query index=turboquant-product bits=5 ef=100 query=16 wall_ms=1.025 checksum=37769
+sample phase=query index=turboquant-product bits=5 ef=100 query=17 wall_ms=1.018 checksum=49663
+sample phase=query index=turboquant-product bits=5 ef=100 query=18 wall_ms=1.064 checksum=31979
+sample phase=query index=turboquant-product bits=5 ef=100 query=19 wall_ms=1.053 checksum=43411
+sample phase=query index=turboquant-product bits=5 ef=100 query=20 wall_ms=1.029 checksum=42112
+sample phase=query index=turboquant-product bits=5 ef=100 query=21 wall_ms=1.145 checksum=49516
+sample phase=query index=turboquant-product bits=5 ef=100 query=22 wall_ms=1.121 checksum=36411
+sample phase=query index=turboquant-product bits=5 ef=100 query=23 wall_ms=1.160 checksum=53420
+sample phase=query index=turboquant-product bits=5 ef=100 query=24 wall_ms=1.062 checksum=40525
+sample phase=query index=turboquant-product bits=5 ef=100 query=25 wall_ms=1.055 checksum=26693
+sample phase=query index=turboquant-product bits=5 ef=100 query=26 wall_ms=1.068 checksum=40265
+sample phase=query index=turboquant-product bits=5 ef=100 query=27 wall_ms=0.996 checksum=45301
+sample phase=query index=turboquant-product bits=5 ef=100 query=28 wall_ms=1.043 checksum=53911
+sample phase=query index=turboquant-product bits=5 ef=100 query=29 wall_ms=1.045 checksum=45884
+sample phase=query index=turboquant-product bits=5 ef=100 query=30 wall_ms=0.998 checksum=36690
+sample phase=query index=turboquant-product bits=5 ef=100 query=31 wall_ms=1.167 checksum=38537
+sample phase=query index=turboquant-product bits=5 ef=100 query=32 wall_ms=1.191 checksum=26979
+sample phase=query index=turboquant-product bits=5 ef=100 query=33 wall_ms=1.049 checksum=47901
+sample phase=query index=turboquant-product bits=5 ef=100 query=34 wall_ms=1.011 checksum=56391
+sample phase=query index=turboquant-product bits=5 ef=100 query=35 wall_ms=1.080 checksum=26572
+sample phase=query index=turboquant-product bits=5 ef=100 query=36 wall_ms=1.065 checksum=47624
+sample phase=query index=turboquant-product bits=5 ef=100 query=37 wall_ms=1.046 checksum=41793
+sample phase=query index=turboquant-product bits=5 ef=100 query=38 wall_ms=0.963 checksum=57802
+sample phase=query index=turboquant-product bits=5 ef=100 query=39 wall_ms=0.978 checksum=57659
+sample phase=query index=turboquant-product bits=5 ef=100 query=40 wall_ms=1.155 checksum=42760
+sample phase=query index=turboquant-product bits=5 ef=100 query=41 wall_ms=1.213 checksum=33206
+sample phase=query index=turboquant-product bits=5 ef=100 query=42 wall_ms=1.154 checksum=44073
+sample phase=query index=turboquant-product bits=5 ef=100 query=43 wall_ms=1.100 checksum=70332
+sample phase=query index=turboquant-product bits=5 ef=100 query=44 wall_ms=1.174 checksum=26319
+sample phase=query index=turboquant-product bits=5 ef=100 query=45 wall_ms=1.037 checksum=40103
+sample phase=query index=turboquant-product bits=5 ef=100 query=46 wall_ms=1.007 checksum=37775
+sample phase=query index=turboquant-product bits=5 ef=100 query=47 wall_ms=1.094 checksum=46947
+sample phase=query index=turboquant-product bits=5 ef=100 query=48 wall_ms=1.129 checksum=45630
+sample phase=query index=turboquant-product bits=5 ef=100 query=49 wall_ms=1.060 checksum=35543
+search index=turboquant-product bits=5 ef=100 median_ms_per_query=1.046 p95_ms_per_query=1.191 qps=956.212 cpu_ms_per_query=1.045 cpu_qps=957.029 recall_at_10=0.414 checksum=12932260
+sample phase=batch index=turboquant-product bits=5 ef=200 trial=0 wall_ms=79.233 cpu_ms=79.169 checksum=2222540
+sample phase=batch index=turboquant-product bits=5 ef=200 trial=1 wall_ms=78.206 cpu_ms=78.140 checksum=2222541
+sample phase=batch index=turboquant-product bits=5 ef=200 trial=2 wall_ms=79.522 cpu_ms=79.371 checksum=2222542
+sample phase=batch index=turboquant-product bits=5 ef=200 trial=3 wall_ms=80.699 cpu_ms=80.534 checksum=2222543
+sample phase=batch index=turboquant-product bits=5 ef=200 trial=4 wall_ms=89.886 cpu_ms=87.853 checksum=2222544
+sample phase=query index=turboquant-product bits=5 ef=200 query=0 wall_ms=1.720 checksum=58047
+sample phase=query index=turboquant-product bits=5 ef=200 query=1 wall_ms=1.646 checksum=53396
+sample phase=query index=turboquant-product bits=5 ef=200 query=2 wall_ms=1.584 checksum=61661
+sample phase=query index=turboquant-product bits=5 ef=200 query=3 wall_ms=1.628 checksum=45718
+sample phase=query index=turboquant-product bits=5 ef=200 query=4 wall_ms=1.595 checksum=47664
+sample phase=query index=turboquant-product bits=5 ef=200 query=5 wall_ms=1.589 checksum=57889
+sample phase=query index=turboquant-product bits=5 ef=200 query=6 wall_ms=1.485 checksum=42305
+sample phase=query index=turboquant-product bits=5 ef=200 query=7 wall_ms=1.457 checksum=39542
+sample phase=query index=turboquant-product bits=5 ef=200 query=8 wall_ms=1.432 checksum=55031
+sample phase=query index=turboquant-product bits=5 ef=200 query=9 wall_ms=1.518 checksum=50862
+sample phase=query index=turboquant-product bits=5 ef=200 query=10 wall_ms=1.556 checksum=51600
+sample phase=query index=turboquant-product bits=5 ef=200 query=11 wall_ms=1.731 checksum=55559
+sample phase=query index=turboquant-product bits=5 ef=200 query=12 wall_ms=1.714 checksum=39416
+sample phase=query index=turboquant-product bits=5 ef=200 query=13 wall_ms=1.607 checksum=32644
+sample phase=query index=turboquant-product bits=5 ef=200 query=14 wall_ms=1.700 checksum=40172
+sample phase=query index=turboquant-product bits=5 ef=200 query=15 wall_ms=1.539 checksum=42028
+sample phase=query index=turboquant-product bits=5 ef=200 query=16 wall_ms=1.598 checksum=38061
+sample phase=query index=turboquant-product bits=5 ef=200 query=17 wall_ms=1.514 checksum=50261
+sample phase=query index=turboquant-product bits=5 ef=200 query=18 wall_ms=1.615 checksum=33180
+sample phase=query index=turboquant-product bits=5 ef=200 query=19 wall_ms=1.461 checksum=47069
+sample phase=query index=turboquant-product bits=5 ef=200 query=20 wall_ms=1.506 checksum=52532
+sample phase=query index=turboquant-product bits=5 ef=200 query=21 wall_ms=1.438 checksum=41745
+sample phase=query index=turboquant-product bits=5 ef=200 query=22 wall_ms=1.598 checksum=39211
+sample phase=query index=turboquant-product bits=5 ef=200 query=23 wall_ms=1.858 checksum=59963
+sample phase=query index=turboquant-product bits=5 ef=200 query=24 wall_ms=1.651 checksum=31214
+sample phase=query index=turboquant-product bits=5 ef=200 query=25 wall_ms=1.545 checksum=26706
+sample phase=query index=turboquant-product bits=5 ef=200 query=26 wall_ms=1.462 checksum=54843
+sample phase=query index=turboquant-product bits=5 ef=200 query=27 wall_ms=1.461 checksum=54407
+sample phase=query index=turboquant-product bits=5 ef=200 query=28 wall_ms=1.579 checksum=59183
+sample phase=query index=turboquant-product bits=5 ef=200 query=29 wall_ms=1.702 checksum=33652
+sample phase=query index=turboquant-product bits=5 ef=200 query=30 wall_ms=1.892 checksum=39397
+sample phase=query index=turboquant-product bits=5 ef=200 query=31 wall_ms=1.668 checksum=41378
+sample phase=query index=turboquant-product bits=5 ef=200 query=32 wall_ms=1.624 checksum=26979
+sample phase=query index=turboquant-product bits=5 ef=200 query=33 wall_ms=1.843 checksum=41693
+sample phase=query index=turboquant-product bits=5 ef=200 query=34 wall_ms=1.630 checksum=51671
+sample phase=query index=turboquant-product bits=5 ef=200 query=35 wall_ms=1.573 checksum=30187
+sample phase=query index=turboquant-product bits=5 ef=200 query=36 wall_ms=1.440 checksum=50573
+sample phase=query index=turboquant-product bits=5 ef=200 query=37 wall_ms=1.536 checksum=40533
+sample phase=query index=turboquant-product bits=5 ef=200 query=38 wall_ms=1.479 checksum=35270
+sample phase=query index=turboquant-product bits=5 ef=200 query=39 wall_ms=1.561 checksum=52280
+sample phase=query index=turboquant-product bits=5 ef=200 query=40 wall_ms=1.577 checksum=33736
+sample phase=query index=turboquant-product bits=5 ef=200 query=41 wall_ms=1.507 checksum=38706
+sample phase=query index=turboquant-product bits=5 ef=200 query=42 wall_ms=1.415 checksum=49913
+sample phase=query index=turboquant-product bits=5 ef=200 query=43 wall_ms=1.413 checksum=54665
+sample phase=query index=turboquant-product bits=5 ef=200 query=44 wall_ms=1.498 checksum=27860
+sample phase=query index=turboquant-product bits=5 ef=200 query=45 wall_ms=1.397 checksum=34781
+sample phase=query index=turboquant-product bits=5 ef=200 query=46 wall_ms=1.397 checksum=37896
+sample phase=query index=turboquant-product bits=5 ef=200 query=47 wall_ms=1.401 checksum=50164
+sample phase=query index=turboquant-product bits=5 ef=200 query=48 wall_ms=1.703 checksum=43082
+sample phase=query index=turboquant-product bits=5 ef=200 query=49 wall_ms=1.717 checksum=46215
+search index=turboquant-product bits=5 ef=200 median_ms_per_query=1.590 p95_ms_per_query=1.843 qps=628.757 cpu_ms_per_query=1.587 cpu_qps=629.953 recall_at_10=0.604 checksum=13335250
+sample phase=batch index=turboquant-product bits=5 ef=400 trial=0 wall_ms=138.132 cpu_ms=129.074 checksum=2319981
+sample phase=batch index=turboquant-product bits=5 ef=400 trial=1 wall_ms=454.298 cpu_ms=200.616 checksum=2319982
+sample phase=batch index=turboquant-product bits=5 ef=400 trial=2 wall_ms=1010.953 cpu_ms=266.969 checksum=2319983
+sample phase=batch index=turboquant-product bits=5 ef=400 trial=3 wall_ms=526.816 cpu_ms=285.918 checksum=2319984
+sample phase=batch index=turboquant-product bits=5 ef=400 trial=4 wall_ms=225.655 cpu_ms=225.228 checksum=2319985
+sample phase=query index=turboquant-product bits=5 ef=400 query=0 wall_ms=4.252 checksum=48792
+sample phase=query index=turboquant-product bits=5 ef=400 query=1 wall_ms=4.639 checksum=60259
+sample phase=query index=turboquant-product bits=5 ef=400 query=2 wall_ms=4.274 checksum=72619
+sample phase=query index=turboquant-product bits=5 ef=400 query=3 wall_ms=4.275 checksum=52497
+sample phase=query index=turboquant-product bits=5 ef=400 query=4 wall_ms=3.981 checksum=53596
+sample phase=query index=turboquant-product bits=5 ef=400 query=5 wall_ms=3.753 checksum=65608
+sample phase=query index=turboquant-product bits=5 ef=400 query=6 wall_ms=3.660 checksum=35772
+sample phase=query index=turboquant-product bits=5 ef=400 query=7 wall_ms=3.621 checksum=41862
+sample phase=query index=turboquant-product bits=5 ef=400 query=8 wall_ms=3.653 checksum=54571
+sample phase=query index=turboquant-product bits=5 ef=400 query=9 wall_ms=3.799 checksum=47611
+sample phase=query index=turboquant-product bits=5 ef=400 query=10 wall_ms=3.711 checksum=48802
+sample phase=query index=turboquant-product bits=5 ef=400 query=11 wall_ms=3.698 checksum=45443
+sample phase=query index=turboquant-product bits=5 ef=400 query=12 wall_ms=3.708 checksum=58719
+sample phase=query index=turboquant-product bits=5 ef=400 query=13 wall_ms=3.645 checksum=34044
+sample phase=query index=turboquant-product bits=5 ef=400 query=14 wall_ms=3.595 checksum=32427
+sample phase=query index=turboquant-product bits=5 ef=400 query=15 wall_ms=3.752 checksum=42156
+sample phase=query index=turboquant-product bits=5 ef=400 query=16 wall_ms=3.996 checksum=41316
+sample phase=query index=turboquant-product bits=5 ef=400 query=17 wall_ms=3.993 checksum=41095
+sample phase=query index=turboquant-product bits=5 ef=400 query=18 wall_ms=3.810 checksum=42622
+sample phase=query index=turboquant-product bits=5 ef=400 query=19 wall_ms=3.686 checksum=49530
+sample phase=query index=turboquant-product bits=5 ef=400 query=20 wall_ms=3.777 checksum=55006
+sample phase=query index=turboquant-product bits=5 ef=400 query=21 wall_ms=3.590 checksum=40728
+sample phase=query index=turboquant-product bits=5 ef=400 query=22 wall_ms=4.033 checksum=33719
+sample phase=query index=turboquant-product bits=5 ef=400 query=23 wall_ms=4.061 checksum=58408
+sample phase=query index=turboquant-product bits=5 ef=400 query=24 wall_ms=3.719 checksum=34611
+sample phase=query index=turboquant-product bits=5 ef=400 query=25 wall_ms=3.910 checksum=26094
+sample phase=query index=turboquant-product bits=5 ef=400 query=26 wall_ms=3.754 checksum=51238
+sample phase=query index=turboquant-product bits=5 ef=400 query=27 wall_ms=3.664 checksum=54447
+sample phase=query index=turboquant-product bits=5 ef=400 query=28 wall_ms=3.826 checksum=68425
+sample phase=query index=turboquant-product bits=5 ef=400 query=29 wall_ms=3.646 checksum=32216
+sample phase=query index=turboquant-product bits=5 ef=400 query=30 wall_ms=3.658 checksum=45972
+sample phase=query index=turboquant-product bits=5 ef=400 query=31 wall_ms=3.913 checksum=50619
+sample phase=query index=turboquant-product bits=5 ef=400 query=32 wall_ms=4.203 checksum=47241
+sample phase=query index=turboquant-product bits=5 ef=400 query=33 wall_ms=4.013 checksum=54994
+sample phase=query index=turboquant-product bits=5 ef=400 query=34 wall_ms=3.922 checksum=40076
+sample phase=query index=turboquant-product bits=5 ef=400 query=35 wall_ms=3.947 checksum=38029
+sample phase=query index=turboquant-product bits=5 ef=400 query=36 wall_ms=3.679 checksum=50927
+sample phase=query index=turboquant-product bits=5 ef=400 query=37 wall_ms=3.852 checksum=40533
+sample phase=query index=turboquant-product bits=5 ef=400 query=38 wall_ms=3.966 checksum=35270
+sample phase=query index=turboquant-product bits=5 ef=400 query=39 wall_ms=3.884 checksum=57138
+sample phase=query index=turboquant-product bits=5 ef=400 query=40 wall_ms=3.617 checksum=29195
+sample phase=query index=turboquant-product bits=5 ef=400 query=41 wall_ms=3.396 checksum=40840
+sample phase=query index=turboquant-product bits=5 ef=400 query=42 wall_ms=3.342 checksum=57825
+sample phase=query index=turboquant-product bits=5 ef=400 query=43 wall_ms=3.318 checksum=57966
+sample phase=query index=turboquant-product bits=5 ef=400 query=44 wall_ms=3.202 checksum=36345
+sample phase=query index=turboquant-product bits=5 ef=400 query=45 wall_ms=3.128 checksum=22905
+sample phase=query index=turboquant-product bits=5 ef=400 query=46 wall_ms=3.334 checksum=50657
+sample phase=query index=turboquant-product bits=5 ef=400 query=47 wall_ms=3.445 checksum=45724
+sample phase=query index=turboquant-product bits=5 ef=400 query=48 wall_ms=3.425 checksum=46524
+sample phase=query index=turboquant-product bits=5 ef=400 query=49 wall_ms=3.401 checksum=46968
+search index=turboquant-product bits=5 ef=400 median_ms_per_query=9.086 p95_ms_per_query=4.274 qps=110.060 cpu_ms_per_query=4.505 cpu_qps=221.997 recall_at_10=0.758 checksum=13919896

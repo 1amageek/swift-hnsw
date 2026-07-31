@@ -60,13 +60,64 @@ struct BitPackingTests {
 @Suite("ScalarQuantizer Tests")
 struct ScalarQuantizerTests {
 
-    @Test("Codebook symmetry", arguments: [1, 2, 3, 4])
+    @Test("Codebook symmetry", arguments: [0, 1, 2, 3, 4])
     func codebookSymmetry(b: Int) {
         let sq = ScalarQuantizer(bitWidth: b, dimension: 128)
         let n = sq.numCentroids
         for i in 0..<n / 2 {
             #expect(abs(sq.centroids[i] + sq.centroids[n - 1 - i]) < 1e-6)
         }
+    }
+
+    @Test("Finite spherical Lloyd-Max matches the uniform three-dimensional case")
+    func sphericalLloydMaxUniformCase() {
+        let quantizer = ScalarQuantizer(
+            bitWidth: 2,
+            dimension: 3,
+            usesExactSphericalDistribution: true
+        )
+        let expected: [Float] = [-0.75, -0.25, 0.25, 0.75]
+        for index in expected.indices {
+            #expect(abs(quantizer.centroids[index] - expected[index]) < 1e-7)
+        }
+    }
+
+    @Test("Finite spherical Lloyd-Max matches the two-dimensional one-bit moment")
+    func sphericalLloydMaxTwoDimensionalMoment() {
+        let quantizer = ScalarQuantizer(
+            bitWidth: 1,
+            dimension: 2,
+            usesExactSphericalDistribution: true
+        )
+        let expected = Float(2 / Double.pi)
+        #expect(abs(quantizer.centroids[0] + expected) < 0.005)
+        #expect(abs(quantizer.centroids[1] - expected) < 0.005)
+    }
+
+    @Test("Finite spherical Lloyd-Max is symmetric", arguments: [2, 17, 128])
+    func sphericalLloydMaxSymmetry(dimension: Int) {
+        let quantizer = ScalarQuantizer(
+            bitWidth: 4,
+            dimension: dimension,
+            usesExactSphericalDistribution: true
+        )
+        for index in 0..<(quantizer.numCentroids / 2) {
+            let opposite = quantizer.numCentroids - 1 - index
+            #expect(
+                abs(quantizer.centroids[index] + quantizer.centroids[opposite])
+                    < 1e-6
+            )
+        }
+    }
+
+    @Test("Zero-bit quantizer reconstructs zero")
+    func zeroBitQuantizer() {
+        let dimension = 17
+        let quantizer = ScalarQuantizer(bitWidth: 0, dimension: dimension)
+        let vector = (0..<dimension).map { Float($0) / 17 }
+        let packed = quantizer.quantizeAndPack(vector)
+        #expect(packed.isEmpty)
+        #expect(quantizer.dequantize(packed) == [Float](repeating: 0, count: dimension))
     }
 
     @Test("Quantize-dequantize MSE bound")
@@ -86,6 +137,365 @@ struct ScalarQuantizerTests {
         mse /= Float(d)
         // Paper: D_mse ≈ 0.009 for b=4 → per-dim ≈ 0.009/d
         #expect(mse < 0.001, "Per-dim MSE should be bounded")
+    }
+
+    @Test("Precomputed ADC table matches decoded distance", arguments: [1, 2, 3, 4])
+    func precomputedADCMatchesDecodedDistance(bitWidth: Int) {
+        let dimension = 17
+        let quantizer = ScalarQuantizer(bitWidth: bitWidth, dimension: dimension)
+        let vector = (0..<dimension).map { index in
+            Float((index * 13 % 19) - 9) / 12
+        }
+        let packed = quantizer.quantizeAndPack(vector)
+        var table = [Float](repeating: 0, count: dimension * quantizer.numCentroids)
+        vector.withUnsafeBufferPointer { buffer in
+            quantizer.fillDistanceTable(for: buffer, into: &table)
+        }
+        let packedDistance = packed.withUnsafeBufferPointer { buffer in
+            quantizer.distance(from: buffer, using: table)
+        }
+        let decoded = quantizer.dequantize(packed)
+        let decodedDistance = zip(vector, decoded).reduce(Float.zero) { partial, pair in
+            let difference = pair.0 - pair.1
+            return partial + difference * difference
+        }
+        #expect(abs(packedDistance - decodedDistance) < 1e-5)
+    }
+
+    @Test("Packed inner-product lookup matches decoded score", arguments: [1, 2, 3, 4])
+    func packedInnerProductMatchesDecodedScore(bitWidth: Int) {
+        let dimension = 17
+        let quantizer = ScalarQuantizer(bitWidth: bitWidth, dimension: dimension)
+        let query = (0..<dimension).map { index in
+            Float((index * 7 % 23) - 11) / 13
+        }
+        let vector = (0..<dimension).map { index in
+            Float((index * 13 % 19) - 9) / 12
+        }
+        let packed = quantizer.quantizeAndPack(vector)
+        var coordinateTable = [Float](repeating: 0, count: dimension * quantizer.numCentroids)
+        query.withUnsafeBufferPointer { buffer in
+            coordinateTable.withUnsafeMutableBufferPointer { table in
+                quantizer.fillInnerProductTable(for: buffer, into: table)
+            }
+        }
+        let coordinateDistance = packed.withUnsafeBufferPointer { packedBuffer in
+            coordinateTable.withUnsafeBufferPointer { table in
+                quantizer.innerProductDistance(from: packedBuffer, using: table)
+            }
+        }
+        var packedTable = [Float](repeating: 0, count: quantizer.packedSize * 256)
+        coordinateTable.withUnsafeBufferPointer { table in
+            packedTable.withUnsafeMutableBufferPointer { packedBuffer in
+                quantizer.fillPackedInnerProductTable(from: table, into: packedBuffer)
+            }
+        }
+        let packedDistance = packed.withUnsafeBufferPointer { packedBuffer in
+            packedTable.withUnsafeBufferPointer { packedBufferTable in
+                coordinateTable.withUnsafeBufferPointer { table in
+                    quantizer.innerProductDistance(
+                        from: packedBuffer,
+                        using: packedBufferTable,
+                        coordinateTable: table
+                    )
+                }
+            }
+        }
+        let decoded = quantizer.dequantize(packed)
+        let decodedDistance = 1 - zip(query, decoded).reduce(Float.zero) { partial, pair in
+            partial + pair.0 * pair.1
+        }
+        #expect(abs(coordinateDistance - decodedDistance) < 1e-5)
+        #expect(abs(packedDistance - decodedDistance) < 1e-5)
+    }
+}
+
+// MARK: - TurboQuant Product Estimator Tests
+
+@Suite("TurboQuant Product Estimator Tests")
+struct TurboQuantProductEstimatorTests {
+
+    @Test("Structured rotation roundtrip", arguments: [17, 64, 129])
+    func rotationRoundtrip(dimension: Int) {
+        var padded = 1
+        while padded < dimension {
+            padded *= 2
+        }
+        let rotation = TurboQuantRotation(
+            dimensions: dimension,
+            paddedDimensions: padded,
+            seed: 42
+        )
+        let input = (0..<dimension).map { index in
+            Float((index * 17 % 31) - 15) / 19
+        }
+        var rotated = [Float](repeating: 0, count: padded)
+        var work = [Float](repeating: 0, count: padded)
+        input.withUnsafeBufferPointer { inputBuffer in
+            rotated.withUnsafeMutableBufferPointer { rotatedBuffer in
+                work.withUnsafeMutableBufferPointer { workBuffer in
+                    rotation.rotateNormalized(
+                        inputBuffer,
+                        into: rotatedBuffer,
+                        work: workBuffer
+                    )
+                }
+            }
+        }
+
+        var reconstructed = [Float](repeating: 0, count: dimension)
+        rotated.withUnsafeBufferPointer { rotatedBuffer in
+            reconstructed.withUnsafeMutableBufferPointer { reconstructedBuffer in
+                work.withUnsafeMutableBufferPointer { workBuffer in
+                    rotation.inverseRotate(
+                        rotatedBuffer,
+                        into: reconstructedBuffer,
+                        work: workBuffer
+                    )
+                }
+            }
+        }
+        for index in 0..<dimension {
+            #expect(abs(input[index] - reconstructed[index]) < 2e-5)
+        }
+    }
+
+    @Test("Haar rotation roundtrip and norm preservation", arguments: [17, 64])
+    func haarRotationRoundtrip(dimension: Int) {
+        let rotation = TurboQuantRotation(
+            dimensions: dimension,
+            paddedDimensions: dimension,
+            strategy: .haar,
+            seed: 42
+        )
+        let input = VectorOperations.normalize(
+            (0..<dimension).map { index in
+                Float((index * 17 % 31) - 15) / 19
+            }
+        )
+        var rotated = [Float](repeating: 0, count: dimension)
+        var work = [Float](repeating: 0, count: dimension)
+        input.withUnsafeBufferPointer { inputBuffer in
+            rotated.withUnsafeMutableBufferPointer { rotatedBuffer in
+                work.withUnsafeMutableBufferPointer { workBuffer in
+                    rotation.rotateNormalized(
+                        inputBuffer,
+                        into: rotatedBuffer,
+                        work: workBuffer
+                    )
+                }
+            }
+        }
+        let rotatedNorm = rotated.reduce(Float.zero) { $0 + $1 * $1 }
+        #expect(abs(rotatedNorm - 1) < 2e-5)
+
+        var reconstructed = [Float](repeating: 0, count: dimension)
+        rotated.withUnsafeBufferPointer { rotatedBuffer in
+            reconstructed.withUnsafeMutableBufferPointer { reconstructedBuffer in
+                work.withUnsafeMutableBufferPointer { workBuffer in
+                    rotation.inverseRotate(
+                        rotatedBuffer,
+                        into: reconstructedBuffer,
+                        work: workBuffer
+                    )
+                }
+            }
+        }
+        for index in input.indices {
+            #expect(abs(input[index] - reconstructed[index]) < 2e-5)
+        }
+    }
+
+    @Test("Haar rotation has the expected coordinate moments")
+    func haarCoordinateMoments() {
+        let dimension = 16
+        let sampleCount = 512
+        let input = [Float](repeating: 0, count: dimension).enumerated().map {
+            $0.offset == 0 ? 1 : $0.element
+        }
+        var coordinateSum: Float = 0
+        var coordinateSquaredSum: Float = 0
+
+        for seed in 0..<sampleCount {
+            let rotation = TurboQuantRotation(
+                dimensions: dimension,
+                paddedDimensions: dimension,
+                strategy: .haar,
+                seed: UInt64(seed)
+            )
+            var rotated = [Float](repeating: 0, count: dimension)
+            var work = [Float](repeating: 0, count: dimension)
+            input.withUnsafeBufferPointer { inputBuffer in
+                rotated.withUnsafeMutableBufferPointer { rotatedBuffer in
+                    work.withUnsafeMutableBufferPointer { workBuffer in
+                        rotation.rotateNormalized(
+                            inputBuffer,
+                            into: rotatedBuffer,
+                            work: workBuffer
+                        )
+                    }
+                }
+            }
+            coordinateSum += rotated[0]
+            coordinateSquaredSum += rotated[0] * rotated[0]
+        }
+
+        let mean = coordinateSum / Float(sampleCount)
+        let secondMoment = coordinateSquaredSum / Float(sampleCount)
+        #expect(abs(mean) < 0.04)
+        #expect(abs(secondMoment - 1 / Float(dimension)) < 0.015)
+    }
+
+    @Test("Packed QJL lookup matches direct signed sum")
+    func packedQJLLookup() throws {
+        let dimension = 17
+        let projection = try QJLProjection(dimension: dimension, seed: 123)
+        let query = (0..<dimension).map { index in
+            Float((index * 7 % 23) - 11) / 13
+        }
+        let vector = (0..<dimension).map { index in
+            Float((index * 11 % 29) - 14) / 17
+        }
+        var projectedQuery = [Float](repeating: 0, count: dimension)
+        var projectedVector = [Float](repeating: 0, count: dimension)
+        query.withUnsafeBufferPointer { input in
+            projectedQuery.withUnsafeMutableBufferPointer { output in
+                projection.project(input, into: output)
+            }
+        }
+        vector.withUnsafeBufferPointer { input in
+            projectedVector.withUnsafeMutableBufferPointer { output in
+                projection.project(input, into: output)
+            }
+        }
+
+        var packedSigns = [UInt8](repeating: 0, count: projection.packedSize)
+        projectedVector.withUnsafeBufferPointer { projected in
+            packedSigns.withUnsafeMutableBufferPointer { packed in
+                projection.packSigns(projected, into: packed)
+            }
+        }
+        var table = [Float](repeating: 0, count: projection.packedSize * 256)
+        projectedQuery.withUnsafeBufferPointer { projected in
+            table.withUnsafeMutableBufferPointer { output in
+                projection.fillInnerProductTable(for: projected, into: output)
+            }
+        }
+        let packedValue = packedSigns.withUnsafeBufferPointer { signs in
+            table.withUnsafeBufferPointer { lookup in
+                projection.innerProduct(signs: signs, using: lookup)
+            }
+        }
+        let directValue = zip(projectedQuery, projectedVector).reduce(Float.zero) {
+            $0 + ($1.1 >= 0 ? $1.0 : -$1.0)
+        }
+        #expect(abs(packedValue - directValue) < 1e-5)
+    }
+
+    @Test("TurboQuant product estimate is unbiased across projection seeds")
+    func productEstimateIsUnbiased() throws {
+        let dimension = 32
+        let totalBitWidth = 3
+        let sampleCount = 256
+        let input = VectorOperations.normalize(
+            (0..<dimension).map { index in
+                Float((index * 17 % 31) - 15) / 19
+            }
+        )
+        let query = VectorOperations.normalize(
+            (0..<dimension).map { index in
+                Float((index * 11 % 29) - 14) / 17
+            }
+        )
+        let exact = zip(input, query).reduce(Float.zero) { $0 + $1.0 * $1.1 }
+        var estimateSum: Float = 0
+
+        for seed in 0..<sampleCount {
+            let typedSeed = UInt64(seed)
+            let rotation = TurboQuantRotation(
+                dimensions: dimension,
+                paddedDimensions: dimension,
+                seed: typedSeed
+            )
+            let quantizer = ScalarQuantizer(
+                bitWidth: totalBitWidth - 1,
+                dimension: dimension
+            )
+            let projection = try QJLProjection(
+                dimension: dimension,
+                seed: typedSeed ^ 0xD1B5_4A32_D192_ED03
+            )
+
+            var rotationWork = [Float](repeating: 0, count: dimension)
+            var rotatedInput = [Float](repeating: 0, count: dimension)
+            input.withUnsafeBufferPointer { inputBuffer in
+                rotatedInput.withUnsafeMutableBufferPointer { rotatedBuffer in
+                    rotationWork.withUnsafeMutableBufferPointer { workBuffer in
+                        rotation.rotateNormalized(
+                            inputBuffer,
+                            into: rotatedBuffer,
+                            work: workBuffer
+                        )
+                    }
+                }
+            }
+            let code = quantizer.quantizeAndPack(rotatedInput)
+            let reconstructedRotated = quantizer.dequantize(code)
+            var residual = [Float](repeating: 0, count: dimension)
+            reconstructedRotated.withUnsafeBufferPointer { reconstructedBuffer in
+                residual.withUnsafeMutableBufferPointer { residualBuffer in
+                    rotationWork.withUnsafeMutableBufferPointer { workBuffer in
+                        rotation.inverseRotate(
+                            reconstructedBuffer,
+                            into: residualBuffer,
+                            work: workBuffer
+                        )
+                    }
+                }
+            }
+            var residualSquaredNorm: Float = 0
+            for index in 0..<dimension {
+                residual[index] = input[index] - residual[index]
+                residualSquaredNorm += residual[index] * residual[index]
+            }
+
+            var projectedResidual = [Float](repeating: 0, count: dimension)
+            var projectedQuery = [Float](repeating: 0, count: dimension)
+            residual.withUnsafeBufferPointer { residualBuffer in
+                projectedResidual.withUnsafeMutableBufferPointer { projectedBuffer in
+                    projection.project(residualBuffer, into: projectedBuffer)
+                }
+            }
+            query.withUnsafeBufferPointer { queryBuffer in
+                projectedQuery.withUnsafeMutableBufferPointer { projectedBuffer in
+                    projection.project(queryBuffer, into: projectedBuffer)
+                }
+            }
+            let qjlSignedSum = zip(projectedQuery, projectedResidual).reduce(Float.zero) {
+                $0 + ($1.1 >= 0 ? $1.0 : -$1.0)
+            }
+
+            var rotatedQuery = [Float](repeating: 0, count: dimension)
+            query.withUnsafeBufferPointer { queryBuffer in
+                rotatedQuery.withUnsafeMutableBufferPointer { rotatedBuffer in
+                    rotationWork.withUnsafeMutableBufferPointer { workBuffer in
+                        rotation.rotateNormalized(
+                            queryBuffer,
+                            into: rotatedBuffer,
+                            work: workBuffer
+                        )
+                    }
+                }
+            }
+            let mseInnerProduct = zip(rotatedQuery, reconstructedRotated)
+                .reduce(Float.zero) { $0 + $1.0 * $1.1 }
+            let qjlScale = Float(1.253_314_137_315_500_3) / Float(dimension)
+            estimateSum += mseInnerProduct
+                + residualSquaredNorm.squareRoot() * qjlScale * qjlSignedSum
+        }
+
+        let meanEstimate = estimateSum / Float(sampleCount)
+        #expect(abs(meanEstimate - exact) < 0.04)
     }
 }
 
@@ -116,13 +526,19 @@ struct TurboQuantIndexTests {
     @Test("Non-power-of-2 dimension")
     func nonPow2Dimension() throws {
         let dim = 768
-        let index = try TurboQuantIndex(dimensions: dim, maxElements: 50, bitWidth: 4, seed: 42)
+        let index = try TurboQuantIndex(
+            dimensions: dim,
+            maxElements: 50,
+            bitWidth: 4,
+            objective: .innerProduct,
+            seed: 42
+        )
 
         #expect(index.paddedDimensions == 1024)
-        // packed_size = ceil(1024 * 4 / 8) = 512
-        #expect(index.bytesPerVector == 512)
-        // compression vs Float32: 768*4 / 512 = 6.0x
-        #expect(index.compressionRatio == 6.0)
+        #expect(index.objective == .innerProduct)
+        // MSE: 1024*3/8, QJL: 768/8, residual norm: 4 bytes.
+        #expect(index.bytesPerVector == 484)
+        #expect(abs(index.compressionRatio - Float(3072) / 484) < 1e-6)
 
         for i in 0..<20 {
             let v = (0..<dim).map { _ in Float.random(in: -1...1) }
@@ -132,11 +548,84 @@ struct TurboQuantIndexTests {
         #expect(results.count == 5)
     }
 
+    @Test("Exact Haar strategy uses the original dimension")
+    func haarNonPowerOfTwoDimension() throws {
+        let dimensions = 33
+        let index = try TurboQuantIndex(
+            dimensions: dimensions,
+            maxElements: 8,
+            bitWidth: 4,
+            rotationStrategy: .haar,
+            seed: 42
+        )
+        #expect(index.paddedDimensions == dimensions)
+        #expect(index.rotationStrategy == .haar)
+        #expect(index.bytesPerVector == 17)
+
+        for label in 0..<8 {
+            try index.add(
+                (0..<dimensions).map {
+                    Float((label * 13 + $0 * 7) % 29 - 14)
+                },
+                label: UInt64(label)
+            )
+        }
+        #expect(try index.search([Float](repeating: 1, count: dimensions), k: 3).count == 3)
+    }
+
     @Test("Dimension mismatch errors")
     func dimensionMismatch() throws {
         let index = try TurboQuantIndex(dimensions: 64, maxElements: 10, bitWidth: 4)
         #expect(throws: HNSWError.self) { try index.add([Float](repeating: 0, count: 32), label: 0) }
         #expect(throws: HNSWError.self) { try index.search([Float](repeating: 0, count: 32), k: 1) }
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "batch dimensions exceed the supported integer range"
+            )
+        ) {
+            _ = try index.searchBatch([], numQueries: Int.max, k: 1)
+        }
+    }
+
+    @Test("Invalid vector values fail explicitly")
+    func invalidVectorValues() throws {
+        let index = try TurboQuantIndex(dimensions: 3, maxElements: 4)
+        #expect(throws: HNSWError.invalidArgument("vector must have nonzero norm")) {
+            try index.add([0, 0, 0], label: 0)
+        }
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "vector must contain only finite values"
+            )
+        ) {
+            try index.add([1, .nan, 0], label: 0)
+        }
+        try index.add([1, 0, 0], label: 0)
+        #expect(throws: HNSWError.invalidArgument("query must have nonzero norm")) {
+            _ = try index.search([0, 0, 0], k: 1)
+        }
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "query must contain only finite values"
+            )
+        ) {
+            _ = try index.search([1, .infinity, 0], k: 1)
+        }
+    }
+
+    @Test("Haar storage limit fails before allocation")
+    func haarStorageLimit() {
+        #expect(
+            throws: HNSWError.initializationFailed(
+                "Haar rotation storage exceeds the 256 MiB limit"
+            )
+        ) {
+            _ = try TurboQuantIndex(
+                dimensions: 12_000,
+                maxElements: 1,
+                rotationStrategy: .haar
+            )
+        }
     }
 
     @Test("Cannot add after finalize")
@@ -151,8 +640,8 @@ struct TurboQuantIndexTests {
         }
     }
 
-    @Test("All bit widths", arguments: [1, 2, 3, 4])
-    func allBitWidths(b: Int) throws {
+    @Test("All MSE bit widths", arguments: [1, 2, 3, 4])
+    func allMSEBitWidths(b: Int) throws {
         let dim = 64
         let p = 64 // 64 is power of 2
         let n = 30
@@ -163,7 +652,55 @@ struct TurboQuantIndexTests {
         }
         let results = try index.search((0..<dim).map { _ in Float.random(in: -1...1) }, k: 5)
         #expect(results.count == 5)
+        #expect(index.objective == .meanSquaredError)
         #expect(index.bytesPerVector == BitPacking.packedSize(count: p, bitWidth: b))
+    }
+
+    @Test("All product bit widths", arguments: [1, 2, 3, 4, 5])
+    func allProductBitWidths(b: Int) throws {
+        let dim = 64
+        let p = 64
+        let n = 30
+        let index = try TurboQuantIndex(
+            dimensions: dim,
+            maxElements: n,
+            bitWidth: b,
+            objective: .innerProduct,
+            seed: 42
+        )
+
+        for i in 0..<n {
+            try index.add((0..<dim).map { _ in Float.random(in: -1...1) }, label: UInt64(i))
+        }
+        let results = try index.search((0..<dim).map { _ in Float.random(in: -1...1) }, k: 5)
+        #expect(results.count == 5)
+        #expect(index.objective == .innerProduct)
+        let expectedBytes = BitPacking.packedSize(count: p, bitWidth: b - 1)
+            + BitPacking.packedSize(count: dim, bitWidth: 1)
+            + MemoryLayout<Float>.size
+        #expect(index.bytesPerVector == expectedBytes)
+    }
+
+    @Test("One-bit product objective drives graph traversal with QJL")
+    func oneBitProductTraversal() throws {
+        let dimension = 16
+        var positive = [Float](repeating: 0, count: dimension)
+        positive[0] = 1
+        let negative = positive.map { -$0 }
+        let index = try TurboQuantIndex(
+            dimensions: dimension,
+            maxElements: 2,
+            bitWidth: 1,
+            objective: .innerProduct,
+            configuration: HNSWConfiguration(m: 2, efConstruction: 2),
+            seed: 42
+        )
+        try index.add(positive, label: 10)
+        try index.add(negative, label: 20)
+        try index.setEfSearch(1)
+
+        #expect(try index.search(positive, k: 1).first?.label == 10)
+        #expect(try index.search(negative, k: 1).first?.label == 20)
     }
 
     @Test("Recall on power-of-2 dimension (d=128, b=4)")
@@ -233,6 +770,8 @@ struct TurboQuantIndexTests {
 
         let index = try TurboQuantIndex(
             dimensions: dim, maxElements: n, bitWidth: 4,
+            objective: .innerProduct,
+            rotationStrategy: .haar,
             configuration: HNSWConfiguration(m: 16, efConstruction: 100), seed: 42)
         let vectors = (0..<n).map { _ in (0..<dim).map { _ in Float.random(in: -1...1) } }
         for (i, v) in vectors.enumerated() { try index.add(v, label: UInt64(i)) }
@@ -252,6 +791,8 @@ struct TurboQuantIndexTests {
         let loaded = try TurboQuantIndex.load(from: tmpPath)
         #expect(loaded.dimensions == dim)
         #expect(loaded.bitWidth == 4)
+        #expect(loaded.objective == .innerProduct)
+        #expect(loaded.rotationStrategy == .haar)
         #expect(loaded.paddedDimensions == 128)
         #expect(loaded.count == n)
         #expect(loaded.isFinalized)
@@ -264,6 +805,33 @@ struct TurboQuantIndexTests {
         let labelsBefore = resultsBefore.map { $0.label }
         let labelsAfter = resultsAfter.map { $0.label }
         #expect(labelsBefore == labelsAfter, "Search results should match after load")
+        #expect(resultsBefore == resultsAfter)
+    }
+
+    @Test("Archive stores packed vectors and graph metadata")
+    func archiveUsesPackedRepresentation() throws {
+        let dimensions = 128
+        let count = 32
+        let index = try TurboQuantIndex(
+            dimensions: dimensions,
+            maxElements: count,
+            bitWidth: 4,
+            configuration: HNSWConfiguration(m: 8, efConstruction: 32),
+            seed: 42
+        )
+        for label in 0..<count {
+            try index.add(
+                (0..<dimensions).map { Float((label * 17 + $0 * 5) % 31) / 31 },
+                label: UInt64(label)
+            )
+        }
+
+        let path = NSTemporaryDirectory() + "tq_packed_\(UUID().uuidString).bin"
+        defer { removeTemporaryFile(atPath: path) }
+        try index.save(to: path)
+        let fileSize = try FileManager.default.attributesOfItem(atPath: path)[.size] as! Int
+        let rawFloatBytes = dimensions * MemoryLayout<Float>.size * count
+        #expect(fileSize < rawFloatBytes)
     }
 
     @Test("Serialization roundtrip non-power-of-2")
@@ -317,13 +885,11 @@ struct TurboQuantIndexTests {
         defer { removeTemporaryFile(atPath: tmpPath) }
 
         let loaded = try TurboQuantIndex.load(from: tmpPath)
-        // Explicitly set the same efSearch on loaded index
-        // (this test verifies that the header preserves it OR that the user must set it)
-        try loaded.setEfSearch(efSearch)
-
         let resultsAfter = try loaded.search(query, k: k)
-        #expect(resultsBefore.map { $0.label } == resultsAfter.map { $0.label },
-               "Loaded index with same efSearch should produce identical results")
+        #expect(
+            resultsBefore == resultsAfter,
+            "Loaded index should preserve efSearch and produce identical results"
+        )
     }
 
     // MARK: - Issue #6: Header serialization must be portable
@@ -406,13 +972,12 @@ struct TurboQuantIndexTests {
         #expect(results[0].label == 0) // should find itself
     }
 
-    // MARK: - Issue #11: Documentation correctness
+    // MARK: - Quantized graph contract
 
-    @Test("Mode 0 uses Float32 L2 not symmetric quantized")
-    func mode0IsFloat32L2() throws {
-        // This test verifies the construction uses exact Float32 L2
-        // by checking that search results are reasonable (high recall)
-        // If mode 0 were symmetric quantized, recall would be much lower
+    @Test("Graph construction uses full precision and search uses ADC")
+    func graphConstructionAndADCSearch() throws {
+        // The graph is built from rotated Float32 vectors, then searched with packed
+        // asymmetric distances after finalization. A self-query must still rank first.
         let dim = 64
         let n = 100
         let k = 10

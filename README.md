@@ -10,7 +10,7 @@ The production index supports WebAssembly builds. A separate reference benchmark
 - **Fast Vector Search**: Nearest-neighbor queries through a stable Swift API
 - **Contiguous Runtime Storage**: Pure Swift stores Float32 and Float16 vectors in type-specific contiguous arenas and graph edges in a fixed-slot connection store
 - **Float16 Support**: Native half-precision for 50% memory reduction
-- **TurboQuant**: 4-bit vector quantization with HD³ rotation for 6-8x memory compression
+- **TurboQuant**: Algorithm 1 MSE codes and Algorithm 2 QJL residual product estimates with exact Haar and fast structured rotations
 - **Multiple Distance Metrics**: L2 (Euclidean), Inner Product, and Cosine similarity
 - **Thread-Safe**: Sendable API with serialized index-state access
 - **Batch Operations**: Efficient bulk add and search operations
@@ -32,7 +32,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/1amageek/swift-hnsw.git", from: "1.0.0")
+    .package(url: "https://github.com/1amageek/swift-hnsw.git", from: "1.0.2")
 ]
 ```
 
@@ -52,13 +52,23 @@ The root package contains the production HNSW index and has no hnswlib target:
 ```bash
 swift build
 xcodebuild test -scheme swift-hnsw -destination 'platform=macOS'
-swift build --swift-sdk swift-6.3.1-RELEASE_wasm
+TOOLCHAINS=org.swift.64202607231a swift build \
+  --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-23-a_wasm
+TOOLCHAINS=org.swift.64202607231a swift build \
+  --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-23-a_wasm-embedded
 ```
 
 Run the optional hnswlib reference comparison from its separate benchmark package:
 
 ```bash
 REFERENCE_COMPARISON_ITERATIONS=5 swift run -c release --package-path Benchmarks/HNSWReferenceComparison HNSWReferenceComparison
+```
+
+Run the deterministic TurboQuant Recall/QPS frontier from the same isolated package:
+
+```bash
+TURBOQUANT_BENCHMARK_CASE=d768 TURBOQUANT_PRIMARY_ONLY=1 \
+  swift run -c release --package-path Benchmarks/HNSWReferenceComparison TurboQuantComparison
 ```
 
 The production index is the portability baseline. The hnswlib code is retained only as a benchmark reference and is not part of default library builds.
@@ -193,6 +203,13 @@ let config = HNSWConfiguration(
     efSearch: 100
 )
 ```
+
+`m` must be in `2...HNSWConfiguration.maximumM` (`10_000`). The upper
+bound prevents one graph node from requesting an unbounded fixed-slot
+connection allocation. The complete retained connection store and search
+workspace each have a 256 MiB limit. Adds and archive loads validate both
+budgets before allocating and report a typed `HNSWError` when a limit is
+exceeded.
 
 ### Adding Vectors
 
@@ -465,16 +482,64 @@ HNSW_PERFORMANCE_TESTS=1 xcodebuild test -scheme swift-hnsw -destination 'platfo
 | Search Latency | 0.138ms | 0.116ms | 1.20x |
 | Recall@10 | 69.7% | 69.9% | **Same** |
 
-### TurboQuant Recall vs QPS (128-dim, 5K vectors)
+### TurboQuant representation and search contract
 
-| Algorithm | efSearch | Recall@10 | QPS | Memory | Compression |
-|-----------|----------|-----------|-----|--------|-------------|
-| Float32 | 100 | 89.5% | 18,041 | 2.4 MB | 1.0x |
-| Float32 | 320 | 99.7% | 7,121 | 2.4 MB | 1.0x |
-| TQ-4bit | 100 | 75.3% | 9,501 | 312 KB | **8.0x** |
-| TQ-4bit | 320 | 80.9% | 4,184 | 312 KB | **8.0x** |
-| TQ-2bit | 100 | 44.9% | 11,893 | 156 KB | **16.0x** |
-| TQ-2bit | 320 | 47.5% | 5,103 | 156 KB | **16.0x** |
+`TurboQuantIndex` implements both algorithms from the TurboQuant paper:
+
+| Objective | Stored record | Supported `bitWidth` |
+| --- | --- | ---: |
+| `.meanSquaredError` | `bitWidth` Lloyd–Max bits per stored rotated coordinate | 1–4 |
+| `.innerProduct` | `(bitWidth - 1)` MSE bits per stored rotated coordinate, one QJL residual-sign bit per original coordinate, and the residual norm | 1–5 |
+
+The inner-product objective applies the paper's unbiased MSE-plus-QJL estimator throughout
+upper-layer greedy descent, level-zero candidate retention, and final ordering. This is
+particularly important at `bitWidth == 1`, where the MSE component has zero bits and QJL is
+the only query-dependent distance term. The Gaussian projection is deterministic for a seed,
+retains `4 * dimensions * dimensions` bytes, and is bounded to 256 MiB. Inspect that separate
+cost through `projectionBytes`.
+
+Two explicit rotation contracts are available:
+
+| Strategy | Transform | Codebook | Cost |
+| --- | --- | --- | --- |
+| `.structuredHadamard` | Three randomized Hadamard stages | Gaussian-limit Lloyd–Max | `O(d log d)`, default |
+| `.haar` | Haar-distributed orthogonal transform represented by Householder reflectors | Finite-dimensional spherical Lloyd–Max | `O(d²)`, paper-fidelity path |
+
+The Haar path does not pad dimensions. The structured path pads to the next power of two, so
+`bitWidth` is the paper's per-original-coordinate budget only for Haar or power-of-two input
+dimensions. For structured product quantization, the effective bits per original coordinate
+before the residual norm are
+`((bitWidth - 1) * paddedDimensions + dimensions) / dimensions`; use
+`bytesPerVector` for the exact stored record size. Haar reflector storage and retained query
+workspaces are bounded to 256 MiB; packed lookup acceleration uses at most 64 MiB within that
+workspace budget. Oversized configurations fail with a typed error before partial allocation.
+
+```swift
+let index = try TurboQuantIndex(
+    dimensions: 768,
+    maxElements: 100_000,
+    bitWidth: 3,
+    objective: .innerProduct,
+    rotationStrategy: .structuredHadamard,
+    configuration: .balanced,
+    seed: 42
+)
+```
+
+TurboQuant normalizes each nonzero finite input. Zero-norm, NaN, and infinite vectors fail with
+`HNSWError.invalidArgument`. HNSW construction uses full-precision rotated vectors. The first
+`search` or an explicit `finalize()` captures the flat graph topology and releases those
+temporary vectors; subsequent search traverses the graph directly over packed codes.
+
+TurboQuant distances are ADC approximations of cosine distance. Recall and latency depend on
+bit width, `efSearch`, dimension, and dataset distribution; benchmark results must therefore
+be reported with the exact dataset and toolchain rather than copied between configurations.
+
+`bytesPerVector` is a packed-record metric, not total index memory. HNSW topology, workspaces,
+the QJL projection, and allocator metadata are additional storage. See the
+[measured benchmark report](reports/turboquant_benchmark.md) and the
+[TurboQuant paper](https://arxiv.org/abs/2504.19874). Smaller codes do not by themselves prove a
+latency improvement; compare implementations at the same Recall on the target workload.
 
 ### Distance Metrics (128-dim, 5K vectors)
 

@@ -1,4 +1,6 @@
 struct HNSWConnectionStore: Sendable {
+    static let maximumRetainedByteCount = 256 * 1_024 * 1_024
+
     private var nodeLevelCounts: [Int]
     private var upperLevelStarts: [Int]
     private var upperLevelCounts: [Int]
@@ -12,7 +14,7 @@ struct HNSWConnectionStore: Sendable {
     private let upperLevelCapacity: Int
 
     init(m: Int) {
-        precondition(m > 0 && m <= (Int.max - 1) / 2)
+        precondition((1...HNSWConfiguration.maximumM).contains(m))
         self.nodeLevelCounts = []
         self.upperLevelStarts = []
         self.upperLevelCounts = []
@@ -30,8 +32,72 @@ struct HNSWConnectionStore: Sendable {
         nodeLevelCounts.count
     }
 
+    var totalUpperLevelSlotCount: Int {
+        upperLevelOffsets.count
+    }
+
     var isEmpty: Bool {
         nodeLevelCounts.isEmpty
+    }
+
+    static func retainedByteCount(
+        nodeCount: Int,
+        totalUpperLevelSlotCount: Int,
+        m: Int
+    ) -> Int? {
+        guard nodeCount >= 0,
+              totalUpperLevelSlotCount >= 0,
+              (2...HNSWConfiguration.maximumM).contains(m) else {
+            return nil
+        }
+
+        let (doubledM, doubledMOverflowed) = m.multipliedReportingOverflow(by: 2)
+        let (level0Capacity, level0CapacityOverflowed) = doubledM.addingReportingOverflow(1)
+        let (upperLevelCapacity, upperLevelCapacityOverflowed) = m.addingReportingOverflow(1)
+        guard !doubledMOverflowed,
+              !level0CapacityOverflowed,
+              !upperLevelCapacityOverflowed else {
+            return nil
+        }
+
+        let nodeMetadataBytes = MemoryLayout<Int>.stride * 4
+        let upperMetadataBytes = MemoryLayout<Int>.stride * 2
+        let (level0NeighborBytes, level0NeighborBytesOverflowed) =
+            level0Capacity.multipliedReportingOverflow(
+                by: MemoryLayout<HNSWInternalID>.stride
+            )
+        let (upperNeighborBytes, upperNeighborBytesOverflowed) =
+            upperLevelCapacity.multipliedReportingOverflow(
+                by: MemoryLayout<HNSWInternalID>.stride
+            )
+        guard !level0NeighborBytesOverflowed,
+              !upperNeighborBytesOverflowed else {
+            return nil
+        }
+
+        let (perNodeBytes, perNodeBytesOverflowed) =
+            nodeMetadataBytes.addingReportingOverflow(level0NeighborBytes)
+        let (perUpperLevelBytes, perUpperLevelBytesOverflowed) =
+            upperMetadataBytes.addingReportingOverflow(upperNeighborBytes)
+        guard !perNodeBytesOverflowed,
+              !perUpperLevelBytesOverflowed else {
+            return nil
+        }
+
+        let (nodeBytes, nodeBytesOverflowed) =
+            nodeCount.multipliedReportingOverflow(by: perNodeBytes)
+        let (upperLevelBytes, upperLevelBytesOverflowed) =
+            totalUpperLevelSlotCount.multipliedReportingOverflow(
+                by: perUpperLevelBytes
+            )
+        let (totalBytes, totalBytesOverflowed) =
+            nodeBytes.addingReportingOverflow(upperLevelBytes)
+        guard !nodeBytesOverflowed,
+              !upperLevelBytesOverflowed,
+              !totalBytesOverflowed else {
+            return nil
+        }
+        return totalBytes
     }
 
     mutating func reserveCapacity(_ nodeCount: Int) {
@@ -195,19 +261,21 @@ struct HNSWConnectionStore: Sendable {
         upperNeighborCounts[slot] = count + 1
     }
 
-    mutating func replaceNeighbors(
-        _ newNeighbors: [HNSWInternalID],
+    mutating func replaceNeighbors<Neighbors: Collection>(
+        _ newNeighbors: Neighbors,
         for internalID: HNSWInternalID,
         at level: Int
-    ) {
+    ) where Neighbors.Element == HNSWInternalID {
         ensureNode(internalID, through: level)
         let nodeIndex = Int(internalID)
         if level == 0 {
             let count = min(newNeighbors.count, level0Capacity)
             let offset = nodeIndex * level0Capacity
             level0NeighborCounts[nodeIndex] = count
+            var sourceIndex = newNeighbors.startIndex
             for index in 0..<count {
-                level0Neighbors[offset + index] = newNeighbors[index]
+                level0Neighbors[offset + index] = newNeighbors[sourceIndex]
+                newNeighbors.formIndex(after: &sourceIndex)
             }
             return
         }
@@ -215,8 +283,10 @@ struct HNSWConnectionStore: Sendable {
         let count = min(newNeighbors.count, upperLevelCapacity)
         let offset = upperLevelOffsets[slot]
         upperNeighborCounts[slot] = count
+        var sourceIndex = newNeighbors.startIndex
         for index in 0..<count {
-            upperNeighbors[offset + index] = newNeighbors[index]
+            upperNeighbors[offset + index] = newNeighbors[sourceIndex]
+            newNeighbors.formIndex(after: &sourceIndex)
         }
     }
 
@@ -291,6 +361,7 @@ struct HNSWConnectionStore: Sendable {
         level0NeighborCounts.removeAll(keepingCapacity: true)
         level0Neighbors.removeAll(keepingCapacity: true)
         reserveCapacity(nestedConnections.count)
+        reserveUpperLevelCapacity(for: nestedConnections)
 
         for levels in nestedConnections {
             appendNode(levelCount: levels.count)
@@ -298,6 +369,33 @@ struct HNSWConnectionStore: Sendable {
             for (level, levelNeighbors) in levels.enumerated() {
                 replaceNeighbors(
                     levelNeighbors.prefix(capacityForLevel(level)).map(HNSWInternalID.init),
+                    for: internalID,
+                    at: level
+                )
+            }
+        }
+    }
+
+    mutating func replaceAll(
+        withInternalIDs nestedConnections: [[[HNSWInternalID]]]
+    ) {
+        nodeLevelCounts.removeAll(keepingCapacity: true)
+        upperLevelStarts.removeAll(keepingCapacity: true)
+        upperLevelCounts.removeAll(keepingCapacity: true)
+        upperLevelOffsets.removeAll(keepingCapacity: true)
+        upperNeighborCounts.removeAll(keepingCapacity: true)
+        upperNeighbors.removeAll(keepingCapacity: true)
+        level0NeighborCounts.removeAll(keepingCapacity: true)
+        level0Neighbors.removeAll(keepingCapacity: true)
+        reserveCapacity(nestedConnections.count)
+        reserveUpperLevelCapacity(for: nestedConnections)
+
+        for levels in nestedConnections {
+            appendNode(levelCount: levels.count)
+            let internalID = HNSWInternalID(nodeLevelCounts.count - 1)
+            for (level, levelNeighbors) in levels.enumerated() {
+                replaceNeighbors(
+                    levelNeighbors.prefix(capacityForLevel(level)),
                     for: internalID,
                     at: level
                 )
@@ -347,6 +445,25 @@ struct HNSWConnectionStore: Sendable {
             upperNeighborCounts.append(0)
             upperNeighbors.append(contentsOf: repeatElement(0, count: upperLevelCapacity))
         }
+    }
+
+    private mutating func reserveUpperLevelCapacity<Neighbor>(
+        for nestedConnections: [[[Neighbor]]]
+    ) {
+        var upperLevelSlotCount = 0
+        for levels in nestedConnections {
+            let (nextCount, overflowed) = upperLevelSlotCount.addingReportingOverflow(
+                max(0, levels.count - 1)
+            )
+            guard !overflowed else { return }
+            upperLevelSlotCount = nextCount
+        }
+        guard upperLevelSlotCount <= Int.max / upperLevelCapacity else {
+            return
+        }
+        upperLevelOffsets.reserveCapacity(upperLevelSlotCount)
+        upperNeighborCounts.reserveCapacity(upperLevelSlotCount)
+        upperNeighbors.reserveCapacity(upperLevelSlotCount * upperLevelCapacity)
     }
 
     private func upperSlot(forNodeIndex nodeIndex: Int, at level: Int) -> Int? {
