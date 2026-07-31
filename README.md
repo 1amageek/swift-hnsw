@@ -32,7 +32,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/1amageek/swift-hnsw.git", from: "1.0.2")
+    .package(url: "https://github.com/1amageek/swift-hnsw.git", from: "1.1.0")
 ]
 ```
 

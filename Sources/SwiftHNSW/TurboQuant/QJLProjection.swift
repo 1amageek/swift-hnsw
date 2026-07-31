@@ -134,9 +134,8 @@ struct QJLProjection: Sendable {
         precondition(table.count == lookupTableCount, "QJL lookup table dimension must match")
 
         // The pruning bound must dominate the Float32 reduction used by `innerProduct`.
-        // Accumulating the mathematical absolute sum in Double is exact for the bounded
-        // number of Float32 inputs. The operation-count margin then covers the table's
-        // nibble sums, byte recombination, four accumulators, and final reduction.
+        // The Float32 operation margin also dominates Double accumulation error for the
+        // bounded dimension and finite query values accepted by the index.
         var absoluteSum: Double = 0
         for value in projectedQuery {
             absoluteSum += Double(abs(value))
@@ -193,18 +192,36 @@ struct QJLProjection: Sendable {
         signs: UnsafeBufferPointer<UInt8>,
         using table: UnsafeBufferPointer<Float>
     ) -> Float {
-        precondition(table.count == signs.count * lookupEntriesPerByte, "QJL lookup table dimension must match")
+        precondition(
+            signs.count <= Int.max / lookupEntriesPerByte,
+            "QJL sign count overflows the lookup-table size"
+        )
+        precondition(
+            table.count == signs.count * lookupEntriesPerByte,
+            "QJL lookup table dimension must match"
+        )
+        guard !signs.isEmpty else { return 0 }
+        // The owners retain both initialized contiguous buffers for this synchronous
+        // borrow. Count validation bounds every offset, Float storage is naturally
+        // aligned, and these pointers never escape or cross a concurrency boundary.
+        let signsBase = signs.baseAddress!
+        let tableBase = table.baseAddress!
         var byteIndex = 0
         var accumulator0: Float = 0
         var accumulator1: Float = 0
         var accumulator2: Float = 0
         var accumulator3: Float = 0
         while byteIndex + 4 <= signs.count {
-            let row = table.baseAddress! + byteIndex * lookupEntriesPerByte
-            let byte0 = signs[byteIndex]
-            let byte1 = signs[byteIndex + 1]
-            let byte2 = signs[byteIndex + 2]
-            let byte3 = signs[byteIndex + 3]
+            let row = tableBase.advanced(by: byteIndex * lookupEntriesPerByte)
+            // The loop bound proves four initialized sign bytes are available. The
+            // unaligned load avoids imposing an alignment requirement on `[UInt8]`.
+            let packedBytes = UInt32(littleEndian: UnsafeRawPointer(
+                signsBase.advanced(by: byteIndex)
+            ).loadUnaligned(as: UInt32.self))
+            let byte0 = UInt8(truncatingIfNeeded: packedBytes)
+            let byte1 = UInt8(truncatingIfNeeded: packedBytes >> 8)
+            let byte2 = UInt8(truncatingIfNeeded: packedBytes >> 16)
+            let byte3 = UInt8(truncatingIfNeeded: packedBytes >> 24)
             accumulator0 += row[Int(byte0 >> 4)] + row[16 + Int(byte0 & 0x0F)]
             accumulator1 += row[32 + Int(byte1 >> 4)] + row[48 + Int(byte1 & 0x0F)]
             accumulator2 += row[64 + Int(byte2 >> 4)] + row[80 + Int(byte2 & 0x0F)]
@@ -213,8 +230,8 @@ struct QJLProjection: Sendable {
         }
         var total = accumulator0 + accumulator1 + accumulator2 + accumulator3
         while byteIndex < signs.count {
-            let row = table.baseAddress! + byteIndex * lookupEntriesPerByte
-            let byte = signs[byteIndex]
+            let row = tableBase.advanced(by: byteIndex * lookupEntriesPerByte)
+            let byte = signsBase[byteIndex]
             total += row[Int(byte >> 4)] + row[16 + Int(byte & 0x0F)]
             byteIndex += 1
         }

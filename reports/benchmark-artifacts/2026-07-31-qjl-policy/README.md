@@ -41,4 +41,3 @@ labels, distances, Recall@10, and checksums at every search point.
 `never` pruned zero candidates in all rows. The full process summaries remain
 in `/tmp` from the measurement session; this repository artifact records the
 durable counters and policy contract rather than host-noisy raw timings.
-

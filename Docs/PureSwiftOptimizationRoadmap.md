@@ -41,7 +41,7 @@ flowchart LR
 | M3 Snapshot Layout | Align persisted snapshots with runtime storage without breaking existing loads. | Existing graph snapshots still load; new snapshots remain versioned. | In progress |
 | M4 Database Integration | Ensure database-framework stores vector payloads as binary and feeds SwiftHNSW without tuple expansion. | Flat, HNSW, IVF, and PQ vector payloads use Float32 little-endian bytes. | In progress |
 | M5 Parity Decision | Compare the production index and hnswlib across target workloads. | The production index is within the accepted performance envelope and hnswlib is removed from the product graph. | Done |
-| M6 Release Gate | Run full tests and publish benchmark results. | Production tests, reference comparison tests, WASM build, and dependent package tests pass. | In progress |
+| M6 Release Gate | Run full tests and publish benchmark results. | Production tests, reference comparison tests, WASM build, and dependent package tests pass. | Done |
 
 ## Performance Decision
 
@@ -71,6 +71,11 @@ Measured search latency and build throughput were faster than the hnswlib refere
 - Latency-sensitive callers can use `search(_:k:into:)` to reuse result buffers.
 - Reference comparison benchmarks record median and p95 search latency across repeated search iterations.
 - Serialization still writes the existing graph format for compatibility.
+- TurboQuant QJL lookup reduction remains pure Swift. Its hot loop borrows
+  packed signs and the lookup table through `UnsafeBufferPointer`, loads four
+  sign bytes with a bounded unaligned `UInt32` read, and keeps the four
+  Float32 accumulators in Swift. The pointer does not escape the synchronous
+  borrow; ASan and TSan cover the active path.
 
 ## Decision Benchmark Snapshot
 
@@ -81,3 +86,12 @@ The comparison remains reproducible with:
 ```bash
 REFERENCE_COMPARISON_ITERATIONS=3 swift run -c release --package-path Benchmarks/HNSWReferenceComparison HNSWReferenceComparison
 ```
+
+## Release decision record — 2026-07-31
+
+The QJL implementation was reviewed as a pure Swift unsafe hot path. A C
+boundary was deliberately rejected: it added a package ABI without a stable
+whole-search speedup, while the bounded Swift word load preserves the same
+Float32 reduction order and works on Native, regular WASM, and Embedded WASM.
+The release gate therefore accepts the pure Swift path and records the
+benchmark limitation that end-to-end HNSW speed is workload-dependent.

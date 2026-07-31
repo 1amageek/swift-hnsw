@@ -457,6 +457,54 @@ struct TurboQuantProductEstimatorTests {
         #expect(absoluteSum >= directAbsoluteSum)
     }
 
+    @Test(
+        "QJL platform lookup preserves Swift reduction order",
+        arguments: [0, 1, 2, 3, 4, 5, 16, 63, 64, 65, 96, 97, 128, 1_024]
+    )
+    func qjlPlatformLookupPreservesSwiftReductionOrder(packedSize: Int) {
+        let signs = (0..<packedSize).map { byte in
+            UInt8(truncatingIfNeeded: byte &* 73 &+ 0x5A)
+        }
+        let table = (0..<(packedSize * QJLProjection.lookupEntriesPerByte)).map { index in
+            Float((index &* 29 % 113) - 56) / 37
+        }
+        var byteIndex = 0
+        var accumulator0: Float = 0
+        var accumulator1: Float = 0
+        var accumulator2: Float = 0
+        var accumulator3: Float = 0
+        while byteIndex + 4 <= packedSize {
+            let row = byteIndex * QJLProjection.lookupEntriesPerByte
+            let byte0 = signs[byteIndex]
+            let byte1 = signs[byteIndex + 1]
+            let byte2 = signs[byteIndex + 2]
+            let byte3 = signs[byteIndex + 3]
+            accumulator0 += table[row + Int(byte0 >> 4)]
+                + table[row + 16 + Int(byte0 & 0x0F)]
+            accumulator1 += table[row + 32 + Int(byte1 >> 4)]
+                + table[row + 48 + Int(byte1 & 0x0F)]
+            accumulator2 += table[row + 64 + Int(byte2 >> 4)]
+                + table[row + 80 + Int(byte2 & 0x0F)]
+            accumulator3 += table[row + 96 + Int(byte3 >> 4)]
+                + table[row + 112 + Int(byte3 & 0x0F)]
+            byteIndex += 4
+        }
+        var expected = accumulator0 + accumulator1 + accumulator2 + accumulator3
+        while byteIndex < packedSize {
+            let row = byteIndex * QJLProjection.lookupEntriesPerByte
+            let byte = signs[byteIndex]
+            expected += table[row + Int(byte >> 4)]
+                + table[row + 16 + Int(byte & 0x0F)]
+            byteIndex += 1
+        }
+        let actual = signs.withUnsafeBufferPointer { packedSigns in
+            table.withUnsafeBufferPointer { lookupTable in
+                QJLProjection.innerProduct(signs: packedSigns, using: lookupTable)
+            }
+        }
+        #expect(actual.bitPattern == expected.bitPattern)
+    }
+
     @Test("QJL pruning bound dominates every packed sign reduction", arguments: [17, 128, 768])
     func qjlPruningBoundDominatesPackedReduction(dimension: Int) throws {
         let projection = try QJLProjection(dimension: dimension, seed: 0xA11C_E55)

@@ -106,6 +106,25 @@ The exact logs record `source_revision=0b12406c36c8915de33dc2fcc2dcfd3e8c9483ec`
 and `source_state=clean` in
 [`benchmark-artifacts/2026-07-31-d768-qjl-nibble-pruning`](benchmark-artifacts/2026-07-31-d768-qjl-nibble-pruning/README.md).
 
+## Pure Swift unsafe QJL reduction verification
+
+The release candidate keeps the QJL lookup reduction in pure Swift. It borrows
+the packed sign and Float32 table buffers with `UnsafeBufferPointer`, validates
+the table-size multiplication, and uses one unaligned `UInt32` load for each
+four-byte group before the same four-accumulator Float32 reduction. The load is
+bounded by the loop condition and the pointer never escapes the synchronous
+borrow. There is no QJL C symbol or C module boundary.
+
+Three concurrent paired d=768 cycles against the previous pure-Swift byte-load
+implementation preserved labels, distances, Recall@10, and checksums. Median
+CPU-QPS ratios (`current / previous`) were `1.153x` at `efSearch=10`, `1.007x`
+at `20`, `1.002x` at `40`, `0.994x` at `60`, `1.002x` at `100`, `1.000x` at
+`200`, and `0.999x` at `400`. These measurements support a hot-path improvement
+at low search effort but do not establish a universal whole-search speedup;
+graph traversal and heap work dominate at larger `efSearch`. The complete
+methodology and the d=128 control are recorded in
+[`benchmark-artifacts/2026-07-31-qjl-pure-swift-unsafe`](benchmark-artifacts/2026-07-31-qjl-pure-swift-unsafe/README.md).
+
 ## 10,000 Vectors, 768 Dimensions
 
 ### Recall/QPS frontier
@@ -242,9 +261,9 @@ policy summaries are stored in
 
 | Verification | Result |
 | --- | --- |
-| Native package tests | 114 tests in 13 suites passed, 0 failed; benchmark cases skipped |
-| Address Sanitizer | Final policy-boundary Product test passed (1 test) |
-| Thread Sanitizer | 12 contract tests, including concurrent search, passed; no race reported |
+| Native package tests | 115 tests in 13 suites passed, 0 failed; benchmark cases skipped |
+| Address Sanitizer | TurboQuant Product suite passed (8 tests) |
+| Thread Sanitizer | Concurrent TurboQuant search passed; no race reported |
 | Undefined Behavior Sanitizer | 10 quantizer/kernel/fallback tests passed after explicitly linking the snapshot runtime |
 | Regular WASM final-source build | Compile and link passed |
 | Embedded WASM final-source build | Compile and link passed |
