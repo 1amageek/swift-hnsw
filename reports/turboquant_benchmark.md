@@ -38,6 +38,15 @@ adds work. TurboQuant MSE 4-bit has positive ARM64 NEON performance evidence,
 but the cycle variance prevents treating this run as a stable capacity
 guarantee. Product 5-bit is not yet a demonstrated latency optimization.
 
+The follow-up commit `0b12406` optimizes the Product QJL path with two 16-entry
+nibble rows per packed sign byte, four independent accumulators, and a
+conservative absolute-sum bound that can skip QJL scoring after the MSE lower
+bound is already worse than the retained HNSW bound. At 768 dimensions the
+query table is reduced from 96 KiB to 12 KiB. The bound is accumulated in
+`Double` and rounded upward before pruning, so the Float32 lookup reduction
+cannot invalidate the lower-bound proof. The follow-up isolated run is
+reported separately below; it is not a paired before/after speed claim.
+
 ```mermaid
 flowchart LR
     A["Normalized and rotated query"] --> B{"ARM64 NEON available?"}
@@ -73,6 +82,29 @@ The optimized process summaries and schedule are stored in
 [`benchmark-artifacts/2026-07-31-d768-neon`](benchmark-artifacts/2026-07-31-d768-neon/README.md).
 The complete pre-optimization raw logs remain in
 [`benchmark-artifacts/2026-07-31-d768-isolated`](benchmark-artifacts/2026-07-31-d768-isolated/README.md).
+
+## Post-change QJL verification (`0b12406`)
+
+This clean-source Release run used the same deterministic d=768 workload and
+the fixed Swift 6.4 development snapshot. It measured one isolated target per
+process with five batches of 50 queries after warmup. Because no old-QJL target
+was run in the same paired cycle, these values validate the current behavior
+and recall only; they do not establish a causal speedup over the previous
+implementation.
+
+| `efSearch` | Product 5-bit recall | Product QPS | Product p95 ms/query | MSE 4-bit recall | MSE QPS | MSE p95 ms/query |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 0.082 | 11,145 | 0.125 | 0.070 | 22,911 | 0.089 |
+| 20 | 0.150 | 7,796 | 0.185 | 0.142 | 13,479 | 0.158 |
+| 40 | 0.230 | 5,044 | 0.277 | 0.208 | 6,951 | 0.203 |
+| 60 | 0.296 | 3,582 | 0.425 | 0.288 | 5,236 | 0.240 |
+| 100 | 0.414 | 2,404 | 0.505 | 0.414 | 3,616 | 0.371 |
+| 200 | 0.604 | 1,421 | 0.996 | 0.594 | 2,175 | 0.545 |
+| 400 | 0.758 | 976 | 1.307 | 0.766 | 1,371 | 1.091 |
+
+The exact logs record `source_revision=0b12406c36c8915de33dc2fcc2dcfd3e8c9483ec`
+and `source_state=clean` in
+[`benchmark-artifacts/2026-07-31-d768-qjl-nibble-pruning`](benchmark-artifacts/2026-07-31-d768-qjl-nibble-pruning/README.md).
 
 ## 10,000 Vectors, 768 Dimensions
 
@@ -157,8 +189,10 @@ FMA chains. Odd and non-multiple-of-sixteen dimensions use a scalar tail.
 The non-NEON path remains functional and uses the coordinate/packed lookup
 implementation. Capability selection is explicit; an unsupported platform
 does not silently execute the ARM64 kernel. Product 5-bit still performs its
-QJL projection and residual estimate, which is now the next measured
-optimization target.
+QJL projection and residual estimate. The new pruning path is active in
+production search, but a separate pruning-count counter is intentionally not
+part of the public API; follow-up paired cycles are required before claiming a
+stable QJL latency improvement.
 
 ## Verification
 
