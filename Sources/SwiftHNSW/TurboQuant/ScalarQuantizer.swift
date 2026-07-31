@@ -1,9 +1,14 @@
+import CTurboQuantKernels
+
 /// Scalar quantizer using Lloyd-Max centroids for a rotated sphere coordinate.
 ///
 /// The structured rotation uses the Gaussian-limit centroids scaled by `1 / sqrt(d)`.
 /// The exact Haar strategy numerically integrates the finite-dimensional coordinate density
 /// proportional to `(1 - x^2)^((d - 3) / 2)` on `[-1, 1]`.
 struct ScalarQuantizer: Sendable {
+
+    static let hasAcceleratedFourBitKernel =
+        swift_hnsw_turboquant_has_accelerated_four_bit_inner_product() != 0
 
     /// Quantization bit-width (0, 1, 2, 3, or 4)
     let bitWidth: Int
@@ -22,6 +27,9 @@ struct ScalarQuantizer: Sendable {
 
     /// Bytes per packed quantized vector
     let packedSize: Int
+
+    /// Four little-endian byte planes for the exact Float32 centroid table.
+    private let fourBitCentroidBytePlanes: [UInt8]
 
     init(
         bitWidth: Int,
@@ -54,6 +62,20 @@ struct ScalarQuantizer: Sendable {
         self.boundaries = bounds
 
         self.packedSize = BitPacking.packedSize(count: dimension, bitWidth: bitWidth)
+        if bitWidth == 4 {
+            var bytePlanes = [UInt8](repeating: 0, count: 64)
+            for centroidIndex in 0..<16 {
+                let bits = centroids[centroidIndex].bitPattern
+                for byteIndex in 0..<4 {
+                    bytePlanes[byteIndex * 16 + centroidIndex] = UInt8(
+                        truncatingIfNeeded: bits >> UInt32(byteIndex * 8)
+                    )
+                }
+            }
+            self.fourBitCentroidBytePlanes = bytePlanes
+        } else {
+            self.fourBitCentroidBytePlanes = []
+        }
     }
 
     /// Quantize and pack a rotated vector into compact bytes.
@@ -148,12 +170,10 @@ struct ScalarQuantizer: Sendable {
     ) {
         precondition(coordinateTable.count == dimension * numCentroids, "Inner-product table dimension must match")
         precondition(packedTable.count == packedSize * 256, "Packed inner-product table dimension must match")
-        guard bitWidth != 3 else {
-            for index in packedTable.indices {
-                packedTable[index] = 0
-            }
-            return
-        }
+        precondition(
+            bitWidth == 1 || bitWidth == 2 || bitWidth == 4,
+            "Packed lookup supports only one-, two-, and four-bit codes"
+        )
 
         var twoBitUpper = SIMD16<Float>(repeating: 0)
         var twoBitLower = SIMD16<Float>(repeating: 0)
@@ -170,7 +190,9 @@ struct ScalarQuantizer: Sendable {
                         total += coordinateTable[firstCoordinate * numCentroids + first]
                     }
                     if firstCoordinate + 1 < dimension {
-                        total += coordinateTable[(firstCoordinate + 1) * numCentroids + second]
+                        total += coordinateTable[
+                            (firstCoordinate + 1) * numCentroids + second
+                        ]
                     }
                     row[packedValue] = total
                 }
@@ -367,6 +389,29 @@ struct ScalarQuantizer: Sendable {
         return total
     }
 
+    /// Computes the exact Float32 four-bit centroid dot product through the
+    /// platform kernel without constructing a per-query packed lookup table.
+    @inline(__always)
+    func fourBitInnerProduct(
+        from packed: UnsafeBufferPointer<UInt8>,
+        query: UnsafeBufferPointer<Float>
+    ) -> Float {
+        precondition(bitWidth == 4, "Native four-bit lookup requires four-bit codes")
+        precondition(packed.count >= packedSize, "Packed vector is truncated")
+        precondition(query.count == dimension, "Query dimension must match")
+        // The Arrays that produced these buffers retain every initialized element for this
+        // synchronous borrow. The validated counts bound all byte and Float32 loads, the
+        // buffers are independently owned, and the C kernel neither stores nor returns a pointer.
+        return fourBitCentroidBytePlanes.withUnsafeBufferPointer { bytePlanes in
+            swift_hnsw_turboquant_four_bit_inner_product(
+                packed.baseAddress!,
+                query.baseAddress!,
+                dimension,
+                bytePlanes.baseAddress!
+            )
+        }
+    }
+
     @inline(__always)
     private func innerProductThreeBit(
         from packed: UnsafeBufferPointer<UInt8>,
@@ -401,32 +446,25 @@ struct ScalarQuantizer: Sendable {
 
     /// Computes the approximate inner-product distance using byte-level lookup tables.
     @inline(__always)
-    func innerProductDistance(
+    func packedInnerProductDistance(
         from packed: UnsafeBufferPointer<UInt8>,
-        using packedTable: UnsafeBufferPointer<Float>,
-        coordinateTable: UnsafeBufferPointer<Float>
+        using packedTable: UnsafeBufferPointer<Float>
     ) -> Float {
-        1 - innerProduct(
-            from: packed,
-            using: packedTable,
-            coordinateTable: coordinateTable
-        )
+        1 - packedInnerProduct(from: packed, using: packedTable)
     }
 
     /// Computes the approximate inner product with byte-level lookup values.
     @inline(__always)
-    func innerProduct(
+    func packedInnerProduct(
         from packed: UnsafeBufferPointer<UInt8>,
-        using packedTable: UnsafeBufferPointer<Float>,
-        coordinateTable: UnsafeBufferPointer<Float>
+        using packedTable: UnsafeBufferPointer<Float>
     ) -> Float {
         precondition(packed.count >= packedSize, "Packed vector is truncated")
         precondition(packedTable.count == packedSize * 256, "Packed inner-product table dimension must match")
-        precondition(coordinateTable.count == dimension * numCentroids, "Inner-product table dimension must match")
-        guard bitWidth > 0 else { return 0 }
-        guard bitWidth != 3 else {
-            return innerProduct(from: packed, using: coordinateTable)
-        }
+        precondition(
+            bitWidth == 1 || bitWidth == 2 || bitWidth == 4,
+            "Packed lookup supports only one-, two-, and four-bit codes"
+        )
         var byteIndex = 0
         var accumulator0: Float = 0
         var accumulator1: Float = 0

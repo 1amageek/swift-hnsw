@@ -64,6 +64,7 @@ public final class TurboQuantIndex: Sendable {
     private let msePackedSize: Int
     private let qjlPackedSize: Int
     private let _packedSize: Int
+    private let usesAcceleratedFourBitKernel: Bool
     private let maximumResidualNorm: Float
     private let maximumElementCount: Int
     private let state: Mutex<State>
@@ -88,6 +89,32 @@ public final class TurboQuantIndex: Sendable {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
+            acceleratedFourBitKernelAvailable:
+                ScalarQuantizer.hasAcceleratedFourBitKernel,
+            createsBuilder: true
+        )
+    }
+
+    convenience init(
+        dimensions: Int,
+        maxElements: Int,
+        bitWidth: Int,
+        objective: TurboQuantObjective,
+        rotationStrategy: TurboQuantRotationStrategy,
+        configuration: HNSWConfiguration,
+        seed: UInt64,
+        acceleratedFourBitKernelAvailable: Bool
+    ) throws {
+        try self.init(
+            dimensions: dimensions,
+            maxElements: maxElements,
+            bitWidth: bitWidth,
+            objective: objective,
+            rotationStrategy: rotationStrategy,
+            configuration: configuration,
+            seed: seed,
+            acceleratedFourBitKernelAvailable:
+                acceleratedFourBitKernelAvailable,
             createsBuilder: true
         )
     }
@@ -100,6 +127,7 @@ public final class TurboQuantIndex: Sendable {
         rotationStrategy: TurboQuantRotationStrategy,
         configuration: HNSWConfiguration,
         seed: UInt64,
+        acceleratedFourBitKernelAvailable: Bool,
         createsBuilder: Bool
     ) throws {
         guard dimensions > 0 else {
@@ -199,16 +227,25 @@ public final class TurboQuantIndex: Sendable {
             throw HNSWError.initializationFailed("TurboQuant record size overflows Int")
         }
         let packedSize = msePackedSize + qjlPackedSize + residualNormSize
+        let usesAcceleratedFourBitKernel = mseBitWidth == 4
+            && acceleratedFourBitKernelAvailable
+        let supportsPackedLookup = mseBitWidth == 1
+            || mseBitWidth == 2
+            || (
+                mseBitWidth == 4
+                    && !usesAcceleratedFourBitKernel
+                    && padded >= 256
+            )
         guard UInt64(packedSize) <= UInt64(UInt32.max) else {
             throw HNSWError.initializationFailed("packed code size must fit the TurboQuant archive format")
         }
-        guard mseBitWidth == 0 || mseBitWidth == 3 || msePackedSize <= Int.max / 256 else {
+        guard !supportsPackedLookup || msePackedSize <= Int.max / 256 else {
             throw HNSWError.initializationFailed("packed distance table size overflows Int")
         }
         guard qjlPackedSize == 0 || qjlPackedSize <= Int.max / 256 else {
             throw HNSWError.initializationFailed("QJL distance table size overflows Int")
         }
-        let distanceTableCount = mseBitWidth == 0
+        let distanceTableCount = mseBitWidth == 0 || usesAcceleratedFourBitKernel
             ? 0
             : padded * (1 << mseBitWidth)
         let qjlTableCount = qjlPackedSize * 256
@@ -239,9 +276,6 @@ public final class TurboQuantIndex: Sendable {
                 "TurboQuant retained workspace exceeds the 256 MiB limit"
             )
         }
-        let supportsPackedLookup = mseBitWidth == 1
-            || mseBitWidth == 2
-            || (mseBitWidth == 4 && padded >= 256)
         let availableLookupBytes = min(
             Self.maximumPackedLookupBytes,
             Self.maximumRetainedWorkspaceBytes
@@ -267,6 +301,7 @@ public final class TurboQuantIndex: Sendable {
         self.msePackedSize = msePackedSize
         self.qjlPackedSize = qjlPackedSize
         self._packedSize = packedSize
+        self.usesAcceleratedFourBitKernel = usesAcceleratedFourBitKernel
         let maximumCentroidMagnitude = quantizer.centroids.reduce(Float.zero) {
             max($0, abs($1))
         }
@@ -534,7 +569,7 @@ public final class TurboQuantIndex: Sendable {
                             )
                         }
                         return state.queryDistanceTable.withUnsafeMutableBufferPointer { distanceTable in
-                            if mseBitWidth > 0 {
+                            if mseBitWidth > 0, !usesAcceleratedFourBitKernel {
                                 quantizer.fillInnerProductTable(
                                     for: UnsafeBufferPointer(start: rotatedQuery.baseAddress, count: rotatedQuery.count),
                                     into: distanceTable
@@ -565,6 +600,7 @@ public final class TurboQuantIndex: Sendable {
                                             entryPoint: entryPoint,
                                             graph: graph,
                                             packedStorage: packedStorage,
+                                            mseQuery: UnsafeBufferPointer(start: rotatedQuery.baseAddress, count: rotatedQuery.count),
                                             distanceTable: UnsafeBufferPointer(start: distanceTable.baseAddress, count: distanceTable.count),
                                             packedDistanceTable: packedLookup,
                                             qjlDistanceTable: UnsafeBufferPointer(start: nil, count: 0),
@@ -595,6 +631,7 @@ public final class TurboQuantIndex: Sendable {
                                                 entryPoint: entryPoint,
                                                 graph: graph,
                                                 packedStorage: packedStorage,
+                                                mseQuery: UnsafeBufferPointer(start: rotatedQuery.baseAddress, count: rotatedQuery.count),
                                                 distanceTable: UnsafeBufferPointer(start: distanceTable.baseAddress, count: distanceTable.count),
                                                 packedDistanceTable: packedLookup,
                                                 qjlDistanceTable: UnsafeBufferPointer(start: qjlTable.baseAddress, count: qjlTable.count),
@@ -752,6 +789,7 @@ public final class TurboQuantIndex: Sendable {
         entryPoint: HNSWInternalID,
         graph: Graph,
         packedStorage: UnsafeBufferPointer<UInt8>,
+        mseQuery: UnsafeBufferPointer<Float>,
         distanceTable: UnsafeBufferPointer<Float>,
         packedDistanceTable: UnsafeBufferPointer<Float>,
         qjlDistanceTable: UnsafeBufferPointer<Float>,
@@ -764,6 +802,7 @@ public final class TurboQuantIndex: Sendable {
         var currentDistance = searchDistance(
             to: current,
             packedStorage: packedStorage,
+            mseQuery: mseQuery,
             distanceTable: distanceTable,
             packedDistanceTable: packedDistanceTable,
             qjlDistanceTable: qjlDistanceTable
@@ -789,6 +828,7 @@ public final class TurboQuantIndex: Sendable {
                             distance: searchDistance(
                                 to: neighbor,
                                 packedStorage: packedStorage,
+                                mseQuery: mseQuery,
                                 distanceTable: distanceTable,
                                 packedDistanceTable: packedDistanceTable,
                                 qjlDistanceTable: qjlDistanceTable
@@ -847,6 +887,7 @@ public final class TurboQuantIndex: Sendable {
                             distance: searchDistance(
                                 to: neighbor,
                                 packedStorage: packedStorage,
+                                mseQuery: mseQuery,
                                 distanceTable: distanceTable,
                                 packedDistanceTable: packedDistanceTable,
                                 qjlDistanceTable: qjlDistanceTable
@@ -891,6 +932,7 @@ public final class TurboQuantIndex: Sendable {
     private func searchDistance(
         to internalID: HNSWInternalID,
         packedStorage: UnsafeBufferPointer<UInt8>,
+        mseQuery: UnsafeBufferPointer<Float>,
         distanceTable: UnsafeBufferPointer<Float>,
         packedDistanceTable: UnsafeBufferPointer<Float>,
         qjlDistanceTable: UnsafeBufferPointer<Float>
@@ -898,6 +940,7 @@ public final class TurboQuantIndex: Sendable {
         let mse = mseDistance(
             to: internalID,
             packedStorage: packedStorage,
+            mseQuery: mseQuery,
             distanceTable: distanceTable,
             packedDistanceTable: packedDistanceTable
         )
@@ -916,6 +959,7 @@ public final class TurboQuantIndex: Sendable {
     private func mseDistance(
         to internalID: HNSWInternalID,
         packedStorage: UnsafeBufferPointer<UInt8>,
+        mseQuery: UnsafeBufferPointer<Float>,
         distanceTable: UnsafeBufferPointer<Float>,
         packedDistanceTable: UnsafeBufferPointer<Float>
     ) -> Float {
@@ -927,13 +971,20 @@ public final class TurboQuantIndex: Sendable {
         let mseInnerProduct: Float
         if mseBitWidth == 0 {
             mseInnerProduct = 0
-        } else if packedDistanceTable.isEmpty {
-            mseInnerProduct = quantizer.innerProduct(from: mseCode, using: distanceTable)
+        } else if usesAcceleratedFourBitKernel {
+            mseInnerProduct = quantizer.fourBitInnerProduct(
+                from: mseCode,
+                query: mseQuery
+            )
+        } else if !packedDistanceTable.isEmpty {
+            mseInnerProduct = quantizer.packedInnerProduct(
+                from: mseCode,
+                using: packedDistanceTable
+            )
         } else {
             mseInnerProduct = quantizer.innerProduct(
                 from: mseCode,
-                using: packedDistanceTable,
-                coordinateTable: distanceTable
+                using: distanceTable
             )
         }
         return 1 - mseInnerProduct
@@ -1245,6 +1296,8 @@ extension TurboQuantIndex {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
+            acceleratedFourBitKernelAvailable:
+                ScalarQuantizer.hasAcceleratedFourBitKernel,
             createsBuilder: false
         )
         guard index.paddedDimensions == paddedDimensions,

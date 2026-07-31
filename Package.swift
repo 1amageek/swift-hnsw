@@ -17,7 +17,13 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "CTurboQuantKernels",
+            path: "Sources/CTurboQuantKernels",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "SwiftHNSW",
+            dependencies: ["CTurboQuantKernels"],
             path: "Sources/SwiftHNSW"
         ),
         .testTarget(

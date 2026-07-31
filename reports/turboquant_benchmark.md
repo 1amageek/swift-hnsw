@@ -25,21 +25,28 @@ The product estimator is used during every HNSW search stage: upper-layer
 greedy descent, level-zero expansion, candidate retention, and final ordering.
 It is not a detached reranker.
 
-The implementation reduces retained vector-code memory substantially. It does
-not outperform the Float32 SIMD kernel on the measured Apple CPU workloads.
-The performance premise is therefore rejected for this implementation and
-these workloads; it must not be inferred from the paper's quantization-time
-results or from the smaller code size.
+The ARM64 implementation now evaluates four-bit MSE codes with a NEON kernel
+that reconstructs exact `Float32` centroids in registers. It removes the old
+576 KiB retained lookup workspace in favor of 64 bytes of centroid byte
+planes. At 768 dimensions and matched `0.414` Recall@10, MSE 4-bit reached
+1.515 times the Float32 QPS using the median of within-cycle ratios in the
+isolated, order-rotated rerun. It won two of three paired cycles.
+
+Product 5-bit uses the same accelerated MSE component but remains at 0.955
+times Float32 by the same paired method because its QJL residual estimator
+adds work. TurboQuant MSE 4-bit has positive ARM64 NEON performance evidence,
+but the cycle variance prevents treating this run as a stable capacity
+guarantee. Product 5-bit is not yet a demonstrated latency optimization.
 
 ```mermaid
 flowchart LR
-    A["Finite input"] --> B["Normalize"]
-    B --> C["Haar or HD³ rotation"]
-    C --> D["Lloyd-Max MSE code"]
-    B --> E["QJL projection"]
-    D --> F["Packed record"]
+    A["Normalized and rotated query"] --> B{"ARM64 NEON available?"}
+    B -->|Yes| C["64-byte centroid planes"]
+    C --> D["16 dimensions per loop: tbl + zip + FMA"]
+    B -->|No| E["Coordinate or packed lookup table"]
+    D --> F["Every HNSW search stage"]
     E --> F
-    F --> G["HNSW traversal using ADC or MSE+QJL estimator"]
+    F --> G["MSE distance or MSE + QJL product estimate"]
 ```
 
 ## Measurement Method
@@ -51,16 +58,20 @@ cache or memory-pressure interference. Process order rotates across three
 cycles. Each search point is warmed up, then executes 50 queries five times
 per process. Build timing includes `TurboQuantIndex.finalize()`.
 
-Every batch and individual-query sample is emitted as a `sample` record.
-No sample is rejected. Search throughput below pools fifteen batch samples per
-representation and `efSearch`, then uses median process CPU time. p95 latency
-pools 150 individual-query wall-time samples. Process CPU time removes
-descheduling time but cannot remove frequency or system-wide interference.
+The optimized rerun records one CPU-QPS summary per process and search point.
+The frontier table uses the median of the three process summaries for each
+representation. The primary relative-performance result first divides
+TurboQuant QPS by Float32 QPS within each cycle, then takes the median of those
+three paired ratios. Each process summary covers five measured batches of 50
+queries after warmup. Process CPU time removes descheduling time but cannot
+remove frequency or system-wide interference. The optimized rerun does not
+retain per-query samples, so it makes no p95 latency claim.
 
 Packed-code memory excludes HNSW topology, allocator metadata, and retained
 query workspaces. Product memory lists its shared QJL projection separately.
-The complete raw logs, process schedule, source state, and SHA-256 checksums are
-stored in
+The optimized process summaries and schedule are stored in
+[`benchmark-artifacts/2026-07-31-d768-neon`](benchmark-artifacts/2026-07-31-d768-neon/README.md).
+The complete pre-optimization raw logs remain in
 [`benchmark-artifacts/2026-07-31-d768-isolated`](benchmark-artifacts/2026-07-31-d768-isolated/README.md).
 
 ## 10,000 Vectors, 768 Dimensions
@@ -69,30 +80,56 @@ stored in
 
 | `efSearch` | Float32 recall | Float32 QPS | MSE 4-bit recall | MSE 4-bit QPS | Product 5-bit recall | Product 5-bit QPS |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 10 | 0.068 | 21,468 | 0.070 | 12,258 | 0.082 | 6,325 |
-| 20 | 0.122 | 11,340 | 0.142 | 7,115 | 0.150 | 4,493 |
-| 40 | 0.216 | 6,705 | 0.208 | 2,334 | 0.230 | 1,805 |
-| 60 | 0.274 | 4,664 | 0.288 | 1,910 | 0.296 | 1,467 |
-| 100 | 0.414 | 3,083 | 0.414 | 1,340 | 0.414 | 1,066 |
-| 200 | 0.624 | 1,739 | 0.594 | 859 | 0.604 | 704 |
-| 400 | 0.828 | 1,006 | 0.766 | 553 | 0.758 | 455 |
+| 10 | 0.068 | 13,113 | 0.070 | 21,939 | 0.082 | 5,654 |
+| 20 | 0.122 | 7,037 | 0.142 | 12,151 | 0.150 | 4,536 |
+| 40 | 0.216 | 3,900 | 0.208 | 7,732 | 0.230 | 3,369 |
+| 60 | 0.274 | 2,757 | 0.288 | 3,856 | 0.296 | 2,411 |
+| 100 | 0.414 | 1,873 | 0.414 | 3,327 | 0.414 | 1,789 |
+| 200 | 0.624 | 1,081 | 0.594 | 2,114 | 0.604 | 963 |
+| 400 | 0.828 | 674 | 0.766 | 1,279 | 0.758 | 686 |
 
-Median build time across the three isolated processes was 4.41 seconds for
-Float32 HNSW, 6.50 seconds for MSE 4-bit, and 6.99 seconds for Product 5-bit.
-The search workspace now grows geometrically within its retained-memory budget,
-avoiding per-element reallocation during graph construction.
+Median build time across the three isolated processes was 7.12 seconds for
+Float32 HNSW, 8.23 seconds for MSE 4-bit, and 10.53 seconds for Product 5-bit.
+System load varied materially during the rerun, so build timing is reported
+only as context and is not used to support the search-kernel conclusion.
 
 At exactly 0.414 Recall@10:
 
-| Representation | QPS | Relative to Float32 | Packed code memory |
+| Representation | Median QPS | Ratio of independent medians | Packed code memory |
 | --- | ---: | ---: | ---: |
-| Float32 | 3,083 | 1.000x | 30.72 MB |
-| TurboQuant MSE 4-bit | 1,340 | 0.435x | 5.12 MB |
-| TurboQuant Product 5-bit | 1,066 | 0.346x | 6.12 MB + 2.36 MB shared projection |
+| Float32 | 1,873 | 1.000x | 30.72 MB |
+| TurboQuant MSE 4-bit | 3,327 | 1.776x | 5.12 MB |
+| TurboQuant Product 5-bit | 1,789 | 0.955x | 6.12 MB + 2.36 MB shared projection |
 
-MSE uses one sixth of the Float32 vector-code memory but is 2.30 times slower
-at the matched recall point. Product is 2.89 times slower and does not improve
-recall at this frontier point.
+Because independently aggregated medians are not paired comparisons, the
+relative-performance conclusion uses the cycle ratios:
+
+| Representation | Cycle 1 | Cycle 2 | Cycle 3 | Median paired ratio |
+| --- | ---: | ---: | ---: | ---: |
+| TurboQuant MSE 4-bit / Float32 | 1.515x | 2.144x | 0.708x | 1.515x |
+| TurboQuant Product 5-bit / Float32 | 1.034x | 0.837x | 0.955x | 0.955x |
+
+MSE uses one sixth of the Float32 vector-code memory and has a 51.5% faster
+median paired result, with wins in two cycles and a loss in one. Product
+retains its memory reduction but has a 4.5% slower median paired result. The
+variance is material and requires more quiet-host cycles before using these
+figures as a capacity forecast.
+
+### Pre-optimization baseline
+
+The earlier isolated implementation used scalar packed-byte lookup and
+accumulation:
+
+| Representation | Previous QPS | Previous relative to Float32 | Optimized QPS | Optimized relative to Float32 |
+| --- | ---: | ---: | ---: | ---: |
+| Float32 | 3,083 | 1.000x | 1,873 | 1.000x |
+| TurboQuant MSE 4-bit | 1,340 | 0.435x | 3,327 | 1.776x |
+| TurboQuant Product 5-bit | 1,066 | 0.346x | 1,789 | 0.955x |
+
+The host was slower during the optimized rerun, as shown by the Float32
+control. MSE and Product absolute QPS increased despite that load, but the two
+runs are not paired and those historical changes are not used as the primary
+speedup evidence.
 
 ## 50,000 Vectors, 768 Dimensions
 
@@ -101,37 +138,45 @@ The previous interleaved 50,000-vector rerun did not complete within the
 isolated-process measurement. The larger-cache-pressure hypothesis therefore
 remains unverified at that scale.
 
-## Why the Packed Path Is Not Faster Yet
+## Why the MSE Path Is Faster
 
-| Cost center | Float32 path | Current packed path |
+| Cost center | Float32 path | ARM64 MSE 4-bit path |
 | --- | --- | --- |
-| Candidate distance | Contiguous SIMD dot product | Scalar packed-byte lookup and accumulation |
+| Candidate bytes at 768 dimensions | 3,072 bytes | 512 bytes after padding to 1,024 dimensions |
+| Query-specific lookup state | None | 64-byte centroid planes |
+| Candidate distance | Contiguous SIMD dot product | 16 coordinates per NEON loop |
+| Decode | None | Four `tbl` lookups reconstruct exact `Float32` bits |
+| Accumulation | SIMD FMA | Four independent SIMD FMA accumulators |
 | Candidate order | Arbitrary graph neighbors | Same arbitrary graph neighbors |
-| Query setup | Normalize query | Normalize, rotate, and build lookup tables |
-| Product setup | None | Dense deterministic QJL projection |
-| Memory traffic | Larger | Smaller |
 
-The memory reduction is real, but HNSW presents one irregular candidate at a
-time. The current CPU kernel cannot amortize decoding and indirect lookup
-across a batch, while the Float32 baseline uses a highly optimized contiguous
-SIMD dot product.
+The kernel reads eight packed bytes for sixteen coordinates, interleaves the
+high and low nibbles in coordinate order, reconstructs four-byte centroids with
+NEON table lookups and zip operations, then accumulates with four independent
+FMA chains. Odd and non-multiple-of-sixteen dimensions use a scalar tail.
 
-The next performance experiment should change the execution shape rather than
-the quantization contract: gather multiple neighbor records, evaluate them in
-a batched NEON/native kernel, and compare allocation counts and matched-recall
-QPS again. A faster result must be demonstrated before selecting TurboQuant as
-a latency optimization.
+The non-NEON path remains functional and uses the coordinate/packed lookup
+implementation. Capability selection is explicit; an unsupported platform
+does not silently execute the ARM64 kernel. Product 5-bit still performs its
+QJL projection and residual estimate, which is now the next measured
+optimization target.
 
 ## Verification
 
 | Verification | Result |
 | --- | --- |
-| Native package tests | 110 tests in 13 suites passed |
-| Address Sanitizer | 69 contract/TurboQuant/quantizer tests in 5 suites passed |
-| Thread Sanitizer | 2 focused concurrent contract tests passed; no race reported |
-| Regular WASM release build | Compile and link passed |
-| Embedded WASM release build | Compile and link passed |
+| Native package tests | 133 concrete test cases passed, 0 failed; 12 benchmark cases skipped |
+| Address Sanitizer | 10 final-source quantizer, ARM64 kernel, and forced-fallback tests passed |
+| Thread Sanitizer | 12 contract tests, including concurrent search, passed; no race reported |
+| Undefined Behavior Sanitizer | 10 quantizer/kernel/fallback tests passed after explicitly linking the snapshot runtime |
+| Regular WASM final-source build | Compile and link passed |
+| Embedded WASM final-source build | Compile and link passed |
 | Archive validation | Version, metadata, address ranges, retained graph/search budgets, padding, topology, residual bounds, and truncation failures tested |
+
+The current snapshot cannot compile the package's existing `Float16` APIs for
+an x86_64 macOS destination, so a Rosetta package-level run was unavailable.
+The non-NEON production branch was instead forced through the internal
+capability input; coordinate-table and packed-table searches over the same
+finalized index produced the same labels and distances.
 
 ### Shared-state review matrix
 

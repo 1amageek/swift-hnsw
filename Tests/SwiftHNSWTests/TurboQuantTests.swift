@@ -162,7 +162,7 @@ struct ScalarQuantizerTests {
         #expect(abs(packedDistance - decodedDistance) < 1e-5)
     }
 
-    @Test("Packed inner-product lookup matches decoded score", arguments: [1, 2, 3, 4])
+    @Test("Packed inner-product lookup matches decoded score", arguments: [1, 2, 4])
     func packedInnerProductMatchesDecodedScore(bitWidth: Int) {
         let dimension = 17
         let quantizer = ScalarQuantizer(bitWidth: bitWidth, dimension: dimension)
@@ -192,13 +192,10 @@ struct ScalarQuantizerTests {
         }
         let packedDistance = packed.withUnsafeBufferPointer { packedBuffer in
             packedTable.withUnsafeBufferPointer { packedBufferTable in
-                coordinateTable.withUnsafeBufferPointer { table in
-                    quantizer.innerProductDistance(
-                        from: packedBuffer,
-                        using: packedBufferTable,
-                        coordinateTable: table
-                    )
-                }
+                quantizer.packedInnerProductDistance(
+                    from: packedBuffer,
+                    using: packedBufferTable
+                )
             }
         }
         let decoded = quantizer.dequantize(packed)
@@ -207,6 +204,72 @@ struct ScalarQuantizerTests {
         }
         #expect(abs(coordinateDistance - decodedDistance) < 1e-5)
         #expect(abs(packedDistance - decodedDistance) < 1e-5)
+    }
+
+    @Test("Four-bit platform kernel matches decoded score", arguments: [17, 128, 768])
+    func fourBitPlatformKernelMatchesDecodedScore(dimension: Int) {
+        let quantizer = ScalarQuantizer(bitWidth: 4, dimension: dimension)
+        let query = (0..<dimension).map { index in
+            Float((index * 7 % 23) - 11) / 13
+        }
+        let vector = (0..<dimension).map { index in
+            Float((index * 13 % 19) - 9) / 12
+        }
+        let packed = quantizer.quantizeAndPack(vector)
+        let platformScore = packed.withUnsafeBufferPointer { packedBuffer in
+            query.withUnsafeBufferPointer { queryBuffer in
+                quantizer.fourBitInnerProduct(
+                    from: packedBuffer,
+                    query: queryBuffer
+                )
+            }
+        }
+        let decoded = quantizer.dequantize(packed)
+        let decodedScore = zip(query, decoded).reduce(Float.zero) { partial, pair in
+            partial + pair.0 * pair.1
+        }
+        #expect(abs(platformScore - decodedScore) < 1e-4)
+    }
+
+    @Test("Four-bit fallback coordinate and packed paths agree")
+    func fourBitFallbackPathsAgree() throws {
+        let dimension = 257
+        let vectorCount = 16
+        let index = try TurboQuantIndex(
+            dimensions: dimension,
+            maxElements: vectorCount,
+            bitWidth: 4,
+            objective: .meanSquaredError,
+            rotationStrategy: .structuredHadamard,
+            configuration: HNSWConfiguration(
+                m: 8,
+                efConstruction: 32,
+                efSearch: 31
+            ),
+            seed: 42,
+            acceleratedFourBitKernelAvailable: false
+        )
+        for vectorIndex in 0..<vectorCount {
+            let vector = (0..<dimension).map { coordinate in
+                Float(
+                    ((vectorIndex + 3) * (coordinate + 5)) % 37 - 18
+                ) / 19
+            }
+            try index.add(vector, label: UInt64(vectorIndex))
+        }
+        try index.finalize()
+        let query = (0..<dimension).map { coordinate in
+            Float((coordinate * 11) % 31 - 15) / 17
+        }
+
+        let coordinateResults = try index.search(query, k: vectorCount)
+        try index.setEfSearch(32)
+        let packedResults = try index.search(query, k: vectorCount)
+
+        #expect(coordinateResults.map(\.label) == packedResults.map(\.label))
+        for (coordinate, packed) in zip(coordinateResults, packedResults) {
+            #expect(abs(coordinate.distance - packed.distance) < 1e-4)
+        }
     }
 }
 
