@@ -501,7 +501,7 @@ struct TurboQuantProductEstimatorTests {
         let configuration = HNSWConfiguration(
             m: 8,
             efConstruction: 32,
-            efSearch: 31
+            efSearch: 100
         )
 
         let makeIndex: (Bool) throws -> TurboQuantIndex = { pruningEnabled in
@@ -545,6 +545,11 @@ struct TurboQuantProductEstimatorTests {
         #expect(statistics.scoredCandidates > 0)
         #expect(statistics.prunedCandidates > 0)
         #expect(statistics.prunedCandidates < statistics.scoredCandidates)
+
+        try optimized.setEfSearch(31)
+        optimized.resetQJLPruningStatistics()
+        _ = try optimized.search(query, k: 10)
+        #expect(optimized.qjlPruningStatistics().prunedCandidates == 0)
     }
 
     @Test("TurboQuant product estimate is unbiased across projection seeds")

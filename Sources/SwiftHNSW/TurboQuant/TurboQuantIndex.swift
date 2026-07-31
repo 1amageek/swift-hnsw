@@ -79,6 +79,9 @@ public final class TurboQuantIndex: Sendable {
     private static let maximumSerializedLevelCount = 64
     private static let maximumRetainedWorkspaceBytes = 256 * 1_024 * 1_024
     private static let maximumPackedLookupBytes = 64 * 1_024 * 1_024
+    // QJL pruning is worthwhile only after the search frontier is large enough
+    // to amortize the conservative-bound check over the additional candidates.
+    private static let minimumQJLPruningEFSearch = 100
 
     public convenience init(
         dimensions: Int,
@@ -877,6 +880,8 @@ public final class TurboQuantIndex: Sendable {
         visitedTag: inout UInt16,
         searchWorkspace: inout HNSWSearchWorkspace
     ) -> [SearchResult] {
+        let qjlPruningEnabled = usesQJLDistancePruning
+            && efSearch >= Self.minimumQJLPruningEFSearch
         var current = entryPoint
         guard let initialDistance = searchDistance(
             to: current,
@@ -887,6 +892,7 @@ public final class TurboQuantIndex: Sendable {
             qjlDistanceTable: qjlDistanceTable,
             qjlAbsoluteSum: qjlAbsoluteSum,
             qjlPruningStatistics: &qjlPruningStatistics,
+            qjlPruningEnabled: qjlPruningEnabled,
             lowerBound: nil
         ) else {
             return []
@@ -917,6 +923,7 @@ public final class TurboQuantIndex: Sendable {
                             qjlDistanceTable: qjlDistanceTable,
                             qjlAbsoluteSum: qjlAbsoluteSum,
                             qjlPruningStatistics: &qjlPruningStatistics,
+                            qjlPruningEnabled: qjlPruningEnabled,
                             lowerBound: currentDistance
                         ) else {
                             continue
@@ -985,6 +992,7 @@ public final class TurboQuantIndex: Sendable {
                             qjlDistanceTable: qjlDistanceTable,
                             qjlAbsoluteSum: qjlAbsoluteSum,
                             qjlPruningStatistics: &qjlPruningStatistics,
+                            qjlPruningEnabled: qjlPruningEnabled,
                             lowerBound: lowerBoundForScoring
                         ) else {
                             continue
@@ -1038,6 +1046,7 @@ public final class TurboQuantIndex: Sendable {
         qjlDistanceTable: UnsafeBufferPointer<Float>,
         qjlAbsoluteSum: Float,
         qjlPruningStatistics: inout QJLPruningStatisticsStorage?,
+        qjlPruningEnabled: Bool,
         lowerBound: Float?
     ) -> Float? {
         let mse = mseDistance(
@@ -1056,7 +1065,7 @@ public final class TurboQuantIndex: Sendable {
             at: offset + msePackedSize + qjlPackedSize
         )
         qjlPruningStatistics?.scoredCandidates &+= 1
-        if usesQJLDistancePruning,
+        if qjlPruningEnabled,
            let lowerBound,
            mse - residualNorm * qjlScale * qjlAbsoluteSum > lowerBound {
             qjlPruningStatistics?.prunedCandidates &+= 1
