@@ -65,6 +65,8 @@ public final class TurboQuantIndex: Sendable {
     private let qjlPackedSize: Int
     private let _packedSize: Int
     private let usesAcceleratedFourBitKernel: Bool
+    private let usesQJLDistancePruning: Bool
+    private let qjlScale: Float
     private let maximumResidualNorm: Float
     private let maximumElementCount: Int
     private let state: Mutex<State>
@@ -91,6 +93,7 @@ public final class TurboQuantIndex: Sendable {
             seed: seed,
             acceleratedFourBitKernelAvailable:
                 ScalarQuantizer.hasAcceleratedFourBitKernel,
+            qjlDistancePruningEnabled: true,
             createsBuilder: true
         )
     }
@@ -103,7 +106,8 @@ public final class TurboQuantIndex: Sendable {
         rotationStrategy: TurboQuantRotationStrategy,
         configuration: HNSWConfiguration,
         seed: UInt64,
-        acceleratedFourBitKernelAvailable: Bool
+        acceleratedFourBitKernelAvailable: Bool,
+        qjlDistancePruningEnabled: Bool = true
     ) throws {
         try self.init(
             dimensions: dimensions,
@@ -115,6 +119,7 @@ public final class TurboQuantIndex: Sendable {
             seed: seed,
             acceleratedFourBitKernelAvailable:
                 acceleratedFourBitKernelAvailable,
+            qjlDistancePruningEnabled: qjlDistancePruningEnabled,
             createsBuilder: true
         )
     }
@@ -128,6 +133,7 @@ public final class TurboQuantIndex: Sendable {
         configuration: HNSWConfiguration,
         seed: UInt64,
         acceleratedFourBitKernelAvailable: Bool,
+        qjlDistancePruningEnabled: Bool,
         createsBuilder: Bool
     ) throws {
         guard dimensions > 0 else {
@@ -242,13 +248,14 @@ public final class TurboQuantIndex: Sendable {
         guard !supportsPackedLookup || msePackedSize <= Int.max / 256 else {
             throw HNSWError.initializationFailed("packed distance table size overflows Int")
         }
-        guard qjlPackedSize == 0 || qjlPackedSize <= Int.max / 256 else {
+        guard qjlPackedSize == 0
+                || qjlPackedSize <= Int.max / QJLProjection.lookupEntriesPerByte else {
             throw HNSWError.initializationFailed("QJL distance table size overflows Int")
         }
         let distanceTableCount = mseBitWidth == 0 || usesAcceleratedFourBitKernel
             ? 0
             : padded * (1 << mseBitWidth)
-        let qjlTableCount = qjlPackedSize * 256
+        let qjlTableCount = qjlProjection?.lookupTableCount ?? 0
         let rotationWorkspaceCount = mseBitWidth == 0 ? 0 : padded
         let queryWorkspaceCount = mseBitWidth == 0 ? 0 : padded
         let workspaceCounts = [
@@ -302,6 +309,10 @@ public final class TurboQuantIndex: Sendable {
         self.qjlPackedSize = qjlPackedSize
         self._packedSize = packedSize
         self.usesAcceleratedFourBitKernel = usesAcceleratedFourBitKernel
+        self.usesQJLDistancePruning = qjlDistancePruningEnabled
+        self.qjlScale = objective == .innerProduct
+            ? Float(1.253_314_137_315_500_3) / Float(dimensions)
+            : 0
         let maximumCentroidMagnitude = quantizer.centroids.reduce(Float.zero) {
             max($0, abs($1))
         }
@@ -604,6 +615,7 @@ public final class TurboQuantIndex: Sendable {
                                             distanceTable: UnsafeBufferPointer(start: distanceTable.baseAddress, count: distanceTable.count),
                                             packedDistanceTable: packedLookup,
                                             qjlDistanceTable: UnsafeBufferPointer(start: nil, count: 0),
+                                            qjlAbsoluteSum: 0,
                                             efSearch: state.efSearch,
                                             visited: &state.visited,
                                             visitedTag: &state.visitedTag,
@@ -619,7 +631,7 @@ public final class TurboQuantIndex: Sendable {
                                             into: projectedQuery
                                         )
                                         return state.queryQJLDistanceTable.withUnsafeMutableBufferPointer { qjlTable in
-                                            qjlProjection.fillInnerProductTable(
+                                            let qjlAbsoluteSum = qjlProjection.fillInnerProductTable(
                                                 for: UnsafeBufferPointer(
                                                     start: projectedQuery.baseAddress,
                                                     count: projectedQuery.count
@@ -635,6 +647,7 @@ public final class TurboQuantIndex: Sendable {
                                                 distanceTable: UnsafeBufferPointer(start: distanceTable.baseAddress, count: distanceTable.count),
                                                 packedDistanceTable: packedLookup,
                                                 qjlDistanceTable: UnsafeBufferPointer(start: qjlTable.baseAddress, count: qjlTable.count),
+                                                qjlAbsoluteSum: qjlAbsoluteSum,
                                                 efSearch: state.efSearch,
                                                 visited: &state.visited,
                                                 visitedTag: &state.visitedTag,
@@ -793,20 +806,26 @@ public final class TurboQuantIndex: Sendable {
         distanceTable: UnsafeBufferPointer<Float>,
         packedDistanceTable: UnsafeBufferPointer<Float>,
         qjlDistanceTable: UnsafeBufferPointer<Float>,
+        qjlAbsoluteSum: Float,
         efSearch: Int,
         visited: inout [UInt16],
         visitedTag: inout UInt16,
         searchWorkspace: inout HNSWSearchWorkspace
     ) -> [SearchResult] {
         var current = entryPoint
-        var currentDistance = searchDistance(
+        guard let initialDistance = searchDistance(
             to: current,
             packedStorage: packedStorage,
             mseQuery: mseQuery,
             distanceTable: distanceTable,
             packedDistanceTable: packedDistanceTable,
-            qjlDistanceTable: qjlDistanceTable
-        )
+            qjlDistanceTable: qjlDistanceTable,
+            qjlAbsoluteSum: qjlAbsoluteSum,
+            lowerBound: nil
+        ) else {
+            return []
+        }
+        var currentDistance = initialDistance
 
         if graph.maxLevel > 0 {
             for level in stride(from: graph.maxLevel, through: 1, by: -1) {
@@ -823,16 +842,21 @@ public final class TurboQuantIndex: Sendable {
                             at: neighborStorageIndex,
                             level: level
                         )
+                        guard let candidateDistance = searchDistance(
+                            to: neighbor,
+                            packedStorage: packedStorage,
+                            mseQuery: mseQuery,
+                            distanceTable: distanceTable,
+                            packedDistanceTable: packedDistanceTable,
+                            qjlDistanceTable: qjlDistanceTable,
+                            qjlAbsoluteSum: qjlAbsoluteSum,
+                            lowerBound: currentDistance
+                        ) else {
+                            continue
+                        }
                         let candidate = HNSWNeighborCandidate(
                             internalID: neighbor,
-                            distance: searchDistance(
-                                to: neighbor,
-                                packedStorage: packedStorage,
-                                mseQuery: mseQuery,
-                                distanceTable: distanceTable,
-                                packedDistanceTable: packedDistanceTable,
-                                qjlDistanceTable: qjlDistanceTable
-                            )
+                            distance: candidateDistance
                         )
                         if isCloserHNSWCandidate(candidate, than: HNSWNeighborCandidate(
                             internalID: current,
@@ -882,16 +906,24 @@ public final class TurboQuantIndex: Sendable {
                             at: neighborStorageIndex
                         )
                         guard markVisited(neighbor, tag: tag, visited: visitedBuffer) else { continue }
+                        let lowerBoundForScoring = nearest.count >= effectiveEF
+                            ? lowerBound
+                            : nil
+                        guard let nextDistance = searchDistance(
+                            to: neighbor,
+                            packedStorage: packedStorage,
+                            mseQuery: mseQuery,
+                            distanceTable: distanceTable,
+                            packedDistanceTable: packedDistanceTable,
+                            qjlDistanceTable: qjlDistanceTable,
+                            qjlAbsoluteSum: qjlAbsoluteSum,
+                            lowerBound: lowerBoundForScoring
+                        ) else {
+                            continue
+                        }
                         let next = HNSWNeighborCandidate(
                             internalID: neighbor,
-                            distance: searchDistance(
-                                to: neighbor,
-                                packedStorage: packedStorage,
-                                mseQuery: mseQuery,
-                                distanceTable: distanceTable,
-                                packedDistanceTable: packedDistanceTable,
-                                qjlDistanceTable: qjlDistanceTable
-                            )
+                            distance: nextDistance
                         )
                         if nearest.count < effectiveEF || next.distance < lowerBound {
                             candidates.pushUnchecked(next)
@@ -935,8 +967,10 @@ public final class TurboQuantIndex: Sendable {
         mseQuery: UnsafeBufferPointer<Float>,
         distanceTable: UnsafeBufferPointer<Float>,
         packedDistanceTable: UnsafeBufferPointer<Float>,
-        qjlDistanceTable: UnsafeBufferPointer<Float>
-    ) -> Float {
+        qjlDistanceTable: UnsafeBufferPointer<Float>,
+        qjlAbsoluteSum: Float,
+        lowerBound: Float?
+    ) -> Float? {
         let mse = mseDistance(
             to: internalID,
             packedStorage: packedStorage,
@@ -947,11 +981,22 @@ public final class TurboQuantIndex: Sendable {
         guard !qjlDistanceTable.isEmpty else {
             return mse
         }
+        let offset = Int(internalID) * _packedSize
+        let residualNorm = Self.loadResidualNorm(
+            from: packedStorage,
+            at: offset + msePackedSize + qjlPackedSize
+        )
+        if usesQJLDistancePruning,
+           let lowerBound,
+           mse - residualNorm * qjlScale * qjlAbsoluteSum > lowerBound {
+            return nil
+        }
         return productDistance(
             fromMSEDistance: mse,
             to: internalID,
             packedStorage: packedStorage,
-            qjlDistanceTable: qjlDistanceTable
+            qjlDistanceTable: qjlDistanceTable,
+            residualNorm: residualNorm
         )
     }
 
@@ -995,7 +1040,8 @@ public final class TurboQuantIndex: Sendable {
         fromMSEDistance mseDistance: Float,
         to internalID: HNSWInternalID,
         packedStorage: UnsafeBufferPointer<UInt8>,
-        qjlDistanceTable: UnsafeBufferPointer<Float>
+        qjlDistanceTable: UnsafeBufferPointer<Float>,
+        residualNorm: Float
     ) -> Float {
         let offset = Int(internalID) * _packedSize
         let qjlSigns = UnsafeBufferPointer(
@@ -1006,11 +1052,6 @@ public final class TurboQuantIndex: Sendable {
             signs: qjlSigns,
             using: qjlDistanceTable
         )
-        let residualNorm = Self.loadResidualNorm(
-            from: packedStorage,
-            at: offset + msePackedSize + qjlPackedSize
-        )
-        let qjlScale = Float(1.253_314_137_315_500_3) / Float(dimensions)
         return mseDistance - residualNorm * qjlScale * qjlInnerProduct
     }
 
@@ -1298,6 +1339,7 @@ extension TurboQuantIndex {
             seed: seed,
             acceleratedFourBitKernelAvailable:
                 ScalarQuantizer.hasAcceleratedFourBitKernel,
+            qjlDistancePruningEnabled: true,
             createsBuilder: false
         )
         guard index.paddedDimensions == paddedDimensions,

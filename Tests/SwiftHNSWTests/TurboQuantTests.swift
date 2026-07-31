@@ -438,8 +438,8 @@ struct TurboQuantProductEstimatorTests {
                 projection.packSigns(projected, into: packed)
             }
         }
-        var table = [Float](repeating: 0, count: projection.packedSize * 256)
-        projectedQuery.withUnsafeBufferPointer { projected in
+        var table = [Float](repeating: 0, count: projection.lookupTableCount)
+        let absoluteSum = projectedQuery.withUnsafeBufferPointer { projected in
             table.withUnsafeMutableBufferPointer { output in
                 projection.fillInnerProductTable(for: projected, into: output)
             }
@@ -452,7 +452,93 @@ struct TurboQuantProductEstimatorTests {
         let directValue = zip(projectedQuery, projectedVector).reduce(Float.zero) {
             $0 + ($1.1 >= 0 ? $1.0 : -$1.0)
         }
+        let directAbsoluteSum = projectedQuery.reduce(Float.zero) { $0 + abs($1) }
         #expect(abs(packedValue - directValue) < 1e-5)
+        #expect(absoluteSum >= directAbsoluteSum)
+    }
+
+    @Test("QJL pruning bound dominates every packed sign reduction", arguments: [17, 128, 768])
+    func qjlPruningBoundDominatesPackedReduction(dimension: Int) throws {
+        let projection = try QJLProjection(dimension: dimension, seed: 0xA11C_E55)
+        let query = (0..<dimension).map { index in
+            Float(((index * 37 + 11) % 101) - 50) / 53
+        }
+        var projectedQuery = [Float](repeating: 0, count: dimension)
+        query.withUnsafeBufferPointer { input in
+            projectedQuery.withUnsafeMutableBufferPointer { output in
+                projection.project(input, into: output)
+            }
+        }
+
+        var table = [Float](repeating: 0, count: projection.lookupTableCount)
+        let absoluteSum = projectedQuery.withUnsafeBufferPointer { projected in
+            table.withUnsafeMutableBufferPointer { output in
+                projection.fillInnerProductTable(for: projected, into: output)
+            }
+        }
+
+        for sample in 0..<128 {
+            var signs = [UInt8](repeating: 0, count: projection.packedSize)
+            for byte in signs.indices {
+                signs[byte] = UInt8(truncatingIfNeeded: sample &* 29 &+ byte &* 71 &+ 0x5A)
+            }
+            let value = signs.withUnsafeBufferPointer { packedSigns in
+                table.withUnsafeBufferPointer { lookup in
+                    projection.innerProduct(signs: packedSigns, using: lookup)
+                }
+            }
+            #expect(
+                abs(value) <= absoluteSum,
+                "Packed QJL reduction exceeded its pruning bound at sample \(sample)"
+            )
+        }
+    }
+
+    @Test("QJL distance pruning preserves product search results")
+    func qjlDistancePruningPreservesResults() throws {
+        let dimension = 32
+        let vectorCount = 64
+        let configuration = HNSWConfiguration(
+            m: 8,
+            efConstruction: 32,
+            efSearch: 31
+        )
+
+        let makeIndex: (Bool) throws -> TurboQuantIndex = { pruningEnabled in
+            let index = try TurboQuantIndex(
+                dimensions: dimension,
+                maxElements: vectorCount,
+                bitWidth: 5,
+                objective: .innerProduct,
+                rotationStrategy: .structuredHadamard,
+                configuration: configuration,
+                seed: 19,
+                acceleratedFourBitKernelAvailable:
+                    ScalarQuantizer.hasAcceleratedFourBitKernel,
+                qjlDistancePruningEnabled: pruningEnabled
+            )
+            for vectorIndex in 0..<vectorCount {
+                let vector = (0..<dimension).map { coordinate in
+                    Float(((vectorIndex + 5) * (coordinate + 3)) % 47 - 23) / 29
+                }
+                try index.add(vector, label: UInt64(vectorIndex))
+            }
+            try index.finalize()
+            return index
+        }
+
+        let query = (0..<dimension).map { coordinate in
+            Float((coordinate * 13) % 31 - 15) / 17
+        }
+        let reference = try makeIndex(false)
+        let optimized = try makeIndex(true)
+        let referenceResults = try reference.search(query, k: 10)
+        let optimizedResults = try optimized.search(query, k: 10)
+
+        #expect(referenceResults.map(\.label) == optimizedResults.map(\.label))
+        for (reference, optimized) in zip(referenceResults, optimizedResults) {
+            #expect(abs(reference.distance - optimized.distance) < 1e-5)
+        }
     }
 
     @Test("TurboQuant product estimate is unbiased across projection seeds")

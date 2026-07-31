@@ -24,11 +24,19 @@ private func hnswAccelerateMatrixVectorMultiply(
 /// immutable after initialization, so concurrent indexes may read it without synchronization.
 struct QJLProjection: Sendable {
     private typealias FloatSIMD = SIMD8<Float>
+    /// Each packed sign byte is evaluated as two independent four-bit nibbles.
+    /// Keeping 32 Float32 values per byte keeps the query table in cache while
+    /// preserving Float32 signed-sum precision.
+    static let lookupEntriesPerByte = 32
 
     let dimension: Int
     let packedSize: Int
     let retainedBytes: Int
     private let matrix: [Float]
+
+    var lookupTableCount: Int {
+        packedSize * Self.lookupEntriesPerByte
+    }
 
     init(dimension: Int, seed: UInt64) throws {
         precondition(dimension > 0, "dimension must be positive")
@@ -116,35 +124,57 @@ struct QJLProjection: Sendable {
         }
     }
 
-    /// Builds one 256-entry signed-sum row for every packed sign byte.
+    /// Builds two 16-entry signed-sum rows for every packed sign byte.
+    @discardableResult
     func fillInnerProductTable(
         for projectedQuery: UnsafeBufferPointer<Float>,
         into table: UnsafeMutableBufferPointer<Float>
-    ) {
+    ) -> Float {
         precondition(projectedQuery.count == dimension, "Projected query dimension must match")
-        precondition(table.count == packedSize * 256, "QJL lookup table dimension must match")
+        precondition(table.count == lookupTableCount, "QJL lookup table dimension must match")
 
+        // The pruning bound must dominate the Float32 reduction used by `innerProduct`.
+        // Accumulating the mathematical absolute sum in Double is exact for the bounded
+        // number of Float32 inputs. The operation-count margin then covers the table's
+        // nibble sums, byte recombination, four accumulators, and final reduction.
+        var absoluteSum: Double = 0
+        for value in projectedQuery {
+            absoluteSum += Double(abs(value))
+        }
         for byteIndex in 0..<packedSize {
             let firstCoordinate = byteIndex * 8
-            let row = table.baseAddress! + byteIndex * 256
-            var negativeSum: Float = 0
-            for lane in 0..<8 {
-                let coordinate = firstCoordinate + lane
-                guard coordinate < dimension else { break }
-                negativeSum -= projectedQuery[coordinate]
+            let row = table.baseAddress! + byteIndex * Self.lookupEntriesPerByte
+            for nibble in 0..<16 {
+                var sum: Float = 0
+                for lane in 0..<4 {
+                    let coordinate = firstCoordinate + lane
+                    guard coordinate < dimension else { break }
+                    let value = projectedQuery[coordinate]
+                    let sign = (nibble >> (3 - lane)) & 1
+                    sum += sign == 0 ? -value : value
+                }
+                row[nibble] = sum
             }
-            row[0] = negativeSum
-            for packedValue in 1..<256 {
-                let value = UInt8(packedValue)
-                let changedBit = value & (~value &+ 1)
-                let lane = 7 - changedBit.trailingZeroBitCount
-                let coordinate = firstCoordinate + lane
-                let delta: Float = coordinate < dimension
-                    ? 2 * projectedQuery[coordinate]
-                    : 0
-                row[packedValue] = row[packedValue ^ Int(changedBit)] + delta
+            for nibble in 0..<16 {
+                var sum: Float = 0
+                for lane in 0..<4 {
+                    let coordinate = firstCoordinate + 4 + lane
+                    guard coordinate < dimension else { break }
+                    let value = projectedQuery[coordinate]
+                    let sign = (nibble >> (3 - lane)) & 1
+                    sum += sign == 0 ? -value : value
+                }
+                row[16 + nibble] = sum
             }
         }
+        let operationCount = Double(packedSize) * 8 + 8
+        let unitRoundoff = Double(Float.ulpOfOne)
+        let errorRatio = operationCount * unitRoundoff
+        guard errorRatio < 1 else { return .infinity }
+        let conservativeSum = absoluteSum / (1 - errorRatio)
+        let roundedSum = Float(conservativeSum)
+        guard roundedSum.isFinite else { return .infinity }
+        return Double(roundedSum) < conservativeSum ? roundedSum.nextUp : roundedSum
     }
 
     /// Computes `dot(projectedQuery, signs)` directly from packed sign bytes.
@@ -154,7 +184,7 @@ struct QJLProjection: Sendable {
         using table: UnsafeBufferPointer<Float>
     ) -> Float {
         precondition(signs.count >= packedSize, "Packed QJL signs are truncated")
-        precondition(table.count == packedSize * 256, "QJL lookup table dimension must match")
+        precondition(table.count == lookupTableCount, "QJL lookup table dimension must match")
         return Self.innerProduct(signs: signs, using: table)
     }
 
@@ -163,25 +193,29 @@ struct QJLProjection: Sendable {
         signs: UnsafeBufferPointer<UInt8>,
         using table: UnsafeBufferPointer<Float>
     ) -> Float {
-        precondition(table.count == signs.count * 256, "QJL lookup table dimension must match")
+        precondition(table.count == signs.count * lookupEntriesPerByte, "QJL lookup table dimension must match")
         var byteIndex = 0
         var accumulator0: Float = 0
         var accumulator1: Float = 0
         var accumulator2: Float = 0
         var accumulator3: Float = 0
         while byteIndex + 4 <= signs.count {
-            let row = table.baseAddress! + byteIndex * 256
-            accumulator0 += row[Int(signs[byteIndex])]
-            accumulator1 += row[256 + Int(signs[byteIndex + 1])]
-            accumulator2 += row[512 + Int(signs[byteIndex + 2])]
-            accumulator3 += row[768 + Int(signs[byteIndex + 3])]
+            let row = table.baseAddress! + byteIndex * lookupEntriesPerByte
+            let byte0 = signs[byteIndex]
+            let byte1 = signs[byteIndex + 1]
+            let byte2 = signs[byteIndex + 2]
+            let byte3 = signs[byteIndex + 3]
+            accumulator0 += row[Int(byte0 >> 4)] + row[16 + Int(byte0 & 0x0F)]
+            accumulator1 += row[32 + Int(byte1 >> 4)] + row[48 + Int(byte1 & 0x0F)]
+            accumulator2 += row[64 + Int(byte2 >> 4)] + row[80 + Int(byte2 & 0x0F)]
+            accumulator3 += row[96 + Int(byte3 >> 4)] + row[112 + Int(byte3 & 0x0F)]
             byteIndex += 4
         }
         var total = accumulator0 + accumulator1 + accumulator2 + accumulator3
         while byteIndex < signs.count {
-            total += table.baseAddress![
-                byteIndex * 256 + Int(signs[byteIndex])
-            ]
+            let row = table.baseAddress! + byteIndex * lookupEntriesPerByte
+            let byte = signs[byteIndex]
+            total += row[Int(byte >> 4)] + row[16 + Int(byte & 0x0F)]
             byteIndex += 1
         }
         return total
