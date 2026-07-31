@@ -3,7 +3,7 @@
 
 import Testing
 import Foundation
-@testable import SwiftHNSW
+@_spi(Benchmarking) @testable import SwiftHNSW
 
 private func removeTemporaryFile(atPath path: String) {
     guard FileManager.default.fileExists(atPath: path) else {
@@ -515,7 +515,8 @@ struct TurboQuantProductEstimatorTests {
                 seed: 19,
                 acceleratedFourBitKernelAvailable:
                     ScalarQuantizer.hasAcceleratedFourBitKernel,
-                qjlDistancePruningEnabled: pruningEnabled
+                qjlDistancePruningEnabled: pruningEnabled,
+                collectQJLPruningStatistics: pruningEnabled
             )
             for vectorIndex in 0..<vectorCount {
                 let vector = (0..<dimension).map { coordinate in
@@ -533,12 +534,17 @@ struct TurboQuantProductEstimatorTests {
         let reference = try makeIndex(false)
         let optimized = try makeIndex(true)
         let referenceResults = try reference.search(query, k: 10)
+        optimized.resetQJLPruningStatistics()
         let optimizedResults = try optimized.search(query, k: 10)
 
         #expect(referenceResults.map(\.label) == optimizedResults.map(\.label))
         for (reference, optimized) in zip(referenceResults, optimizedResults) {
             #expect(abs(reference.distance - optimized.distance) < 1e-5)
         }
+        let statistics = optimized.qjlPruningStatistics()
+        #expect(statistics.scoredCandidates > 0)
+        #expect(statistics.prunedCandidates > 0)
+        #expect(statistics.prunedCandidates < statistics.scoredCandidates)
     }
 
     @Test("TurboQuant product estimate is unbiased across projection seeds")

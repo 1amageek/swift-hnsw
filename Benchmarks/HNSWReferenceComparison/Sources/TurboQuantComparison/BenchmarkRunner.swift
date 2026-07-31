@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+@_spi(Benchmarking)
 import SwiftHNSW
 
 private struct SplitMix64 {
@@ -40,6 +41,8 @@ private struct Measurement {
     let cpuQueriesPerSecond: Double
     let recall: Double
     let checksum: UInt64
+    let qjlScoredCandidates: Int?
+    let qjlPrunedCandidates: Int?
 }
 
 private struct SearchTarget {
@@ -47,6 +50,8 @@ private struct SearchTarget {
     let bitWidth: Int?
     let setEfSearch: (Int) throws -> Void
     let search: ([Float]) throws -> [SearchResult]
+    let resetQJLPruningStatistics: (() -> Void)?
+    let qjlPruningStatistics: (() -> TurboQuantQJLPruningStatistics)?
 }
 
 private struct MeasurementSamples {
@@ -55,6 +60,8 @@ private struct MeasurementSamples {
     var individualMilliseconds: [Double] = []
     var lastResults: [[SearchResult]] = []
     var checksum: UInt64 = 0
+    var qjlScoredCandidates: [Int] = []
+    var qjlPrunedCandidates: [Int] = []
 }
 
 private enum BenchmarkRunnerError: Error {
@@ -79,6 +86,17 @@ struct BenchmarkRunner {
         let requestedTarget = environment[
             "TURBOQUANT_BENCHMARK_TARGET"
         ]
+        let qjlPruningMode = environment[
+            "TURBOQUANT_QJL_PRUNING"
+        ] ?? "enabled"
+        guard ["enabled", "disabled", "enabled-stats", "disabled-stats"]
+            .contains(qjlPruningMode) else {
+            throw BenchmarkRunnerError.unsupportedTarget(
+                "TURBOQUANT_QJL_PRUNING=\(qjlPruningMode)"
+            )
+        }
+        let qjlPruningEnabled = qjlPruningMode.hasPrefix("enabled")
+        let collectQJLPruningStatistics = qjlPruningMode.hasSuffix("stats")
         if let requestedTarget,
            !supportedTargets.contains(requestedTarget) {
             throw BenchmarkRunnerError.unsupportedTarget(requestedTarget)
@@ -122,6 +140,9 @@ struct BenchmarkRunner {
             "turboquant_benchmark measurement_mode=" +
             (requestedTarget == nil ? "interleaved" : "isolated") +
             " target=\(requestedTarget ?? "all")"
+        )
+        print(
+            "turboquant_benchmark qjl_pruning=\(qjlPruningMode)"
         )
         let allCases = [
             BenchmarkCase(
@@ -173,13 +194,20 @@ struct BenchmarkRunner {
             selectedCases = allCases
         }
         for benchmarkCase in selectedCases {
-            try run(benchmarkCase, requestedTarget: requestedTarget)
+            try run(
+                benchmarkCase,
+                requestedTarget: requestedTarget,
+                qjlPruningEnabled: qjlPruningEnabled,
+                collectQJLPruningStatistics: collectQJLPruningStatistics
+            )
         }
     }
 
     private static func run(
         _ benchmarkCase: BenchmarkCase,
-        requestedTarget: String?
+        requestedTarget: String?,
+        qjlPruningEnabled: Bool,
+        collectQJLPruningStatistics: Bool
     ) throws {
         print("")
         print(
@@ -232,7 +260,9 @@ struct BenchmarkRunner {
                     name: "hnsw-cosine",
                     bitWidth: nil,
                     setEfSearch: { try hnsw.setEfSearch($0) },
-                    search: { try hnsw.search($0, k: benchmarkCase.k) }
+                    search: { try hnsw.search($0, k: benchmarkCase.k) },
+                    resetQJLPruningStatistics: nil,
+                    qjlPruningStatistics: nil
                 )
             )
         }
@@ -260,17 +290,35 @@ struct BenchmarkRunner {
             requestedTarget: requestedTarget
         ) {
             let turboStart = ContinuousClock.now
-            let turbo = try TurboQuantIndex(
-                dimensions: benchmarkCase.dimensions,
-                maxElements: benchmarkCase.count,
-                bitWidth: bitWidth,
-                objective: objective,
-                configuration: HNSWConfiguration(
-                    m: 16,
-                    efConstruction: 200
-                ),
-                seed: 42
-            )
+            let turbo: TurboQuantIndex
+            if objective == .innerProduct {
+                turbo = try TurboQuantIndex(
+                    dimensions: benchmarkCase.dimensions,
+                    maxElements: benchmarkCase.count,
+                    bitWidth: bitWidth,
+                    objective: objective,
+                    configuration: HNSWConfiguration(
+                        m: 16,
+                        efConstruction: 200
+                    ),
+                    seed: 42,
+                    qjlDistancePruningEnabled: qjlPruningEnabled,
+                    collectQJLPruningStatistics:
+                        collectQJLPruningStatistics
+                )
+            } else {
+                turbo = try TurboQuantIndex(
+                    dimensions: benchmarkCase.dimensions,
+                    maxElements: benchmarkCase.count,
+                    bitWidth: bitWidth,
+                    objective: objective,
+                    configuration: HNSWConfiguration(
+                        m: 16,
+                        efConstruction: 200
+                    ),
+                    seed: 42
+                )
+            }
             for (label, vector) in vectors.enumerated() {
                 try turbo.add(vector, label: UInt64(label))
             }
@@ -292,7 +340,15 @@ struct BenchmarkRunner {
                     name: name,
                     bitWidth: bitWidth,
                     setEfSearch: { try turbo.setEfSearch($0) },
-                    search: { try turbo.search($0, k: benchmarkCase.k) }
+                    search: { try turbo.search($0, k: benchmarkCase.k) },
+                    resetQJLPruningStatistics:
+                        objective == .innerProduct && collectQJLPruningStatistics
+                        ? { turbo.resetQJLPruningStatistics() }
+                        : nil,
+                    qjlPruningStatistics:
+                        objective == .innerProduct && collectQJLPruningStatistics
+                        ? { turbo.qjlPruningStatistics() }
+                        : nil
                 )
             )
         }
@@ -339,6 +395,9 @@ struct BenchmarkRunner {
                 _ = try targets[targetIndex].search(query)
             }
         }
+        for target in targets {
+            target.resetQJLPruningStatistics?()
+        }
 
         var samples = targets.map { _ in MeasurementSamples() }
         for index in samples.indices {
@@ -353,6 +412,7 @@ struct BenchmarkRunner {
                 offset: scheduleOffset + iteration
             ) {
                 let target = targets[targetIndex]
+                target.resetQJLPruningStatistics?()
                 let start = ContinuousClock.now
                 let cpuStart = processCPUSeconds()
                 var results: [[SearchResult]] = []
@@ -375,13 +435,24 @@ struct BenchmarkRunner {
                 samples[targetIndex].cpuMilliseconds.append(cpuMilliseconds)
                 samples[targetIndex].lastResults = results
                 samples[targetIndex].checksum &+= trialChecksum
+                if let qjlStatistics = target.qjlPruningStatistics?() {
+                    samples[targetIndex].qjlScoredCandidates.append(
+                        qjlStatistics.scoredCandidates
+                    )
+                    samples[targetIndex].qjlPrunedCandidates.append(
+                        qjlStatistics.prunedCandidates
+                    )
+                }
                 print(
                     "sample phase=batch index=\(target.name) " +
                     "bits=\(target.bitWidth.map(String.init) ?? "-") " +
                     "ef=\(efSearch) trial=\(iteration) " +
                     "wall_ms=\(format(wallMilliseconds)) " +
                     "cpu_ms=\(format(cpuMilliseconds)) " +
-                    "checksum=\(trialChecksum)"
+                    "checksum=\(trialChecksum)" +
+                    qjlStatisticsSuffix(
+                        target.qjlPruningStatistics?()
+                    )
                 )
             }
         }
@@ -445,7 +516,13 @@ struct BenchmarkRunner {
                 cpuQueriesPerSecond: Double(queries.count) /
                 (cpuMedian / 1_000),
                 recall: recall,
-                checksum: targetSamples.checksum
+                checksum: targetSamples.checksum,
+                qjlScoredCandidates: targetSamples.qjlScoredCandidates.isEmpty
+                    ? nil
+                    : Self.median(targetSamples.qjlScoredCandidates),
+                qjlPrunedCandidates: targetSamples.qjlPrunedCandidates.isEmpty
+                    ? nil
+                    : Self.median(targetSamples.qjlPrunedCandidates)
             )
         }
     }
@@ -485,7 +562,39 @@ struct BenchmarkRunner {
             "cpu_ms_per_query=\(format(measurement.cpuMilliseconds)) " +
             "cpu_qps=\(format(measurement.cpuQueriesPerSecond)) " +
             "recall_at_10=\(format(measurement.recall)) " +
-            "checksum=\(measurement.checksum)"
+            "checksum=\(measurement.checksum)" +
+            qjlStatisticsSuffix(
+                scoredCandidates: measurement.qjlScoredCandidates,
+                prunedCandidates: measurement.qjlPrunedCandidates
+            )
+    }
+
+    private static func qjlStatisticsSuffix(
+        _ statistics: TurboQuantQJLPruningStatistics?
+    ) -> String {
+        guard let statistics else { return "" }
+        return qjlStatisticsSuffix(
+            scoredCandidates: statistics.scoredCandidates,
+            prunedCandidates: statistics.prunedCandidates
+        )
+    }
+
+    private static func qjlStatisticsSuffix(
+        scoredCandidates: Int?,
+        prunedCandidates: Int?
+    ) -> String {
+        guard let scoredCandidates, let prunedCandidates else { return "" }
+        let rate = scoredCandidates > 0
+            ? Double(prunedCandidates) / Double(scoredCandidates)
+            : 0
+        return " qjl_scored=\(scoredCandidates)" +
+            " qjl_pruned=\(prunedCandidates)" +
+            " qjl_pruning_rate=\(format(rate))"
+    }
+
+    private static func median(_ values: [Int]) -> Int {
+        let sorted = values.sorted()
+        return sorted[sorted.count / 2]
     }
 
     private static func makeVectors(

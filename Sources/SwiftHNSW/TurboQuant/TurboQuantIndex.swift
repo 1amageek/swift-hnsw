@@ -47,6 +47,12 @@ public final class TurboQuantIndex: Sendable {
         var visited: [UInt16]
         var visitedTag: UInt16
         var searchWorkspace: HNSWSearchWorkspace
+        var qjlPruningStatistics: QJLPruningStatisticsStorage?
+    }
+
+    private struct QJLPruningStatisticsStorage: Sendable {
+        var scoredCandidates: Int = 0
+        var prunedCandidates: Int = 0
     }
 
     public let dimensions: Int
@@ -98,6 +104,36 @@ public final class TurboQuantIndex: Sendable {
         )
     }
 
+    /// Creates a benchmark-configured Product index without adding an application-facing
+    /// algorithm switch. The SPI is used only by the repository benchmark target.
+    @_spi(Benchmarking)
+    public convenience init(
+        dimensions: Int,
+        maxElements: Int,
+        bitWidth: Int = 4,
+        objective: TurboQuantObjective = .meanSquaredError,
+        rotationStrategy: TurboQuantRotationStrategy = .structuredHadamard,
+        configuration: HNSWConfiguration = .balanced,
+        seed: UInt64 = 42,
+        qjlDistancePruningEnabled: Bool,
+        collectQJLPruningStatistics: Bool = false
+    ) throws {
+        try self.init(
+            dimensions: dimensions,
+            maxElements: maxElements,
+            bitWidth: bitWidth,
+            objective: objective,
+            rotationStrategy: rotationStrategy,
+            configuration: configuration,
+            seed: seed,
+            acceleratedFourBitKernelAvailable:
+                ScalarQuantizer.hasAcceleratedFourBitKernel,
+            qjlDistancePruningEnabled: qjlDistancePruningEnabled,
+            collectQJLPruningStatistics: collectQJLPruningStatistics,
+            createsBuilder: true
+        )
+    }
+
     convenience init(
         dimensions: Int,
         maxElements: Int,
@@ -107,7 +143,8 @@ public final class TurboQuantIndex: Sendable {
         configuration: HNSWConfiguration,
         seed: UInt64,
         acceleratedFourBitKernelAvailable: Bool,
-        qjlDistancePruningEnabled: Bool = true
+        qjlDistancePruningEnabled: Bool = true,
+        collectQJLPruningStatistics: Bool = false
     ) throws {
         try self.init(
             dimensions: dimensions,
@@ -120,6 +157,7 @@ public final class TurboQuantIndex: Sendable {
             acceleratedFourBitKernelAvailable:
                 acceleratedFourBitKernelAvailable,
             qjlDistancePruningEnabled: qjlDistancePruningEnabled,
+            collectQJLPruningStatistics: collectQJLPruningStatistics,
             createsBuilder: true
         )
     }
@@ -134,6 +172,7 @@ public final class TurboQuantIndex: Sendable {
         seed: UInt64,
         acceleratedFourBitKernelAvailable: Bool,
         qjlDistancePruningEnabled: Bool,
+        collectQJLPruningStatistics: Bool = false,
         createsBuilder: Bool
     ) throws {
         guard dimensions > 0 else {
@@ -358,8 +397,31 @@ public final class TurboQuantIndex: Sendable {
                 : [Float](repeating: 0, count: qjlTableCount),
             visited: [],
             visitedTag: 0,
-            searchWorkspace: HNSWSearchWorkspace()
+            searchWorkspace: HNSWSearchWorkspace(),
+            qjlPruningStatistics: collectQJLPruningStatistics
+                ? QJLPruningStatisticsStorage()
+                : nil
         ))
+    }
+
+    /// Returns benchmark-only Product pruning counters collected by the SPI initializer.
+    @_spi(Benchmarking)
+    public func qjlPruningStatistics() -> TurboQuantQJLPruningStatistics {
+        state.withLock { state in
+            TurboQuantQJLPruningStatistics(
+                scoredCandidates: state.qjlPruningStatistics?.scoredCandidates ?? 0,
+                prunedCandidates: state.qjlPruningStatistics?.prunedCandidates ?? 0
+            )
+        }
+    }
+
+    /// Clears benchmark-only Product pruning counters.
+    @_spi(Benchmarking)
+    public func resetQJLPruningStatistics() {
+        state.withLock { state in
+            state.qjlPruningStatistics?.scoredCandidates = 0
+            state.qjlPruningStatistics?.prunedCandidates = 0
+        }
     }
 
     public var count: Int {
@@ -616,6 +678,7 @@ public final class TurboQuantIndex: Sendable {
                                             packedDistanceTable: packedLookup,
                                             qjlDistanceTable: UnsafeBufferPointer(start: nil, count: 0),
                                             qjlAbsoluteSum: 0,
+                                            qjlPruningStatistics: &state.qjlPruningStatistics,
                                             efSearch: state.efSearch,
                                             visited: &state.visited,
                                             visitedTag: &state.visitedTag,
@@ -648,6 +711,7 @@ public final class TurboQuantIndex: Sendable {
                                                 packedDistanceTable: packedLookup,
                                                 qjlDistanceTable: UnsafeBufferPointer(start: qjlTable.baseAddress, count: qjlTable.count),
                                                 qjlAbsoluteSum: qjlAbsoluteSum,
+                                                qjlPruningStatistics: &state.qjlPruningStatistics,
                                                 efSearch: state.efSearch,
                                                 visited: &state.visited,
                                                 visitedTag: &state.visitedTag,
@@ -807,6 +871,7 @@ public final class TurboQuantIndex: Sendable {
         packedDistanceTable: UnsafeBufferPointer<Float>,
         qjlDistanceTable: UnsafeBufferPointer<Float>,
         qjlAbsoluteSum: Float,
+        qjlPruningStatistics: inout QJLPruningStatisticsStorage?,
         efSearch: Int,
         visited: inout [UInt16],
         visitedTag: inout UInt16,
@@ -821,6 +886,7 @@ public final class TurboQuantIndex: Sendable {
             packedDistanceTable: packedDistanceTable,
             qjlDistanceTable: qjlDistanceTable,
             qjlAbsoluteSum: qjlAbsoluteSum,
+            qjlPruningStatistics: &qjlPruningStatistics,
             lowerBound: nil
         ) else {
             return []
@@ -850,6 +916,7 @@ public final class TurboQuantIndex: Sendable {
                             packedDistanceTable: packedDistanceTable,
                             qjlDistanceTable: qjlDistanceTable,
                             qjlAbsoluteSum: qjlAbsoluteSum,
+                            qjlPruningStatistics: &qjlPruningStatistics,
                             lowerBound: currentDistance
                         ) else {
                             continue
@@ -917,6 +984,7 @@ public final class TurboQuantIndex: Sendable {
                             packedDistanceTable: packedDistanceTable,
                             qjlDistanceTable: qjlDistanceTable,
                             qjlAbsoluteSum: qjlAbsoluteSum,
+                            qjlPruningStatistics: &qjlPruningStatistics,
                             lowerBound: lowerBoundForScoring
                         ) else {
                             continue
@@ -969,6 +1037,7 @@ public final class TurboQuantIndex: Sendable {
         packedDistanceTable: UnsafeBufferPointer<Float>,
         qjlDistanceTable: UnsafeBufferPointer<Float>,
         qjlAbsoluteSum: Float,
+        qjlPruningStatistics: inout QJLPruningStatisticsStorage?,
         lowerBound: Float?
     ) -> Float? {
         let mse = mseDistance(
@@ -986,9 +1055,11 @@ public final class TurboQuantIndex: Sendable {
             from: packedStorage,
             at: offset + msePackedSize + qjlPackedSize
         )
+        qjlPruningStatistics?.scoredCandidates &+= 1
         if usesQJLDistancePruning,
            let lowerBound,
            mse - residualNorm * qjlScale * qjlAbsoluteSum > lowerBound {
+            qjlPruningStatistics?.prunedCandidates &+= 1
             return nil
         }
         return productDistance(
