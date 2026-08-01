@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2 — 2026-08-01
+
+- Enabled the portable `CTurboQuantKernels` four-bit MSE path on Native
+  non-ARM, regular WASM, and Embedded WASM while retaining ARM64 NEON.
+- Verified C compilation and target linking with the fixed Swift 6.4 snapshot;
+  the archive representation is unchanged.
+
 ## 1.1.1 — 2026-08-01
 
 - Reduced QJL lookup-loop load overhead with a bounded pure Swift unaligned

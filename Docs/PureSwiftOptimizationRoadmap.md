@@ -108,5 +108,6 @@ remaining groups. The differential test covers eight-byte groups, the fallback,
 and tails after an eight-byte group. Three paired d=768 cycles produced median
 CPU-QPS ratios from 1.027x to 1.071x for `efSearch` 20 through 400; d=128
 remained positive or neutral, with identical Recall@10 and checksums. The
-archive representation is unchanged, so this candidate is a 1.1.1 patch
-update rather than a format migration.
+archive representation is unchanged, so that optimization was a 1.1.1 patch
+update rather than a format migration. The subsequent portable C target
+integration is released as 1.1.2 without changing that archive contract.
