@@ -529,8 +529,11 @@ struct TurboQuantProductEstimatorTests {
     @Test("QJL pruning bound dominates every packed sign reduction", arguments: [17, 128, 768])
     func qjlPruningBoundDominatesPackedReduction(dimension: Int) throws {
         let projection = try QJLProjection(dimension: dimension, seed: 0xA11C_E55)
-        let query = (0..<dimension).map { index in
-            Float(((index * 37 + 11) % 101) - 50) / 53
+        var query: [Float] = []
+        query.reserveCapacity(dimension)
+        for index in 0..<dimension {
+            let numerator = ((index * 37 + 11) % 101) - 50
+            query.append(Float(numerator) / 53)
         }
         var projectedQuery = [Float](repeating: 0, count: dimension)
         query.withUnsafeBufferPointer { input in
