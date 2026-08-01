@@ -32,7 +32,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/1amageek/swift-hnsw.git", from: "1.1.2")
+    .package(url: "https://github.com/1amageek/swift-hnsw.git", from: "1.1.3")
 ]
 ```
 
@@ -535,14 +535,23 @@ TurboQuant distances are ADC approximations of cosine distance. Recall and laten
 bit width, `efSearch`, dimension, and dataset distribution; benchmark results must therefore
 be reported with the exact dataset and toolchain rather than copied between configurations.
 
-The four-bit MSE inner-product path uses `CTurboQuantKernels`: ARM64 selects
-the NEON implementation, while Native non-ARM, regular WASM, and Embedded WASM
-use the portable C kernel. The C target is part of the production SwiftPM graph;
-the QJL reduction remains a pure Swift unsafe implementation.
+The four-bit MSE inner-product path selects the measured NEON implementation on
+Native ARM64 and a scalar C implementation on regular WASM, Embedded WASM, and
+other linked targets. The direct Swift implementation remains a differential
+and benchmarking reference because the scalar C path measured 1.044x to 1.067x
+faster on the verified WASM targets. The QJL reduction remains a bounded Swift
+unsafe implementation.
+
+The WASM evidence currently covers the production four-bit kernel boundary,
+including runtime differential checks and benchmarks. It does not establish a
+complete `HNSWIndex<Float>` / `TurboQuantIndex` lifecycle: the fixed Swift 6.4
+snapshot traps in generic HNSW construction metadata before four-bit scoring is
+reached. Full end-to-end WASM index support is therefore not claimed here.
 
 `bytesPerVector` is a packed-record metric, not total index memory. HNSW topology, workspaces,
 the QJL projection, and allocator metadata are additional storage. See the
-[measured benchmark report](reports/turboquant_benchmark.md) and the
+[measured benchmark report](reports/turboquant_benchmark.md), the
+[Swift/C backend decision artifact](reports/benchmark-artifacts/2026-08-01-swift-c-parity/README.md), and the
 [TurboQuant paper](https://arxiv.org/abs/2504.19874). Smaller codes do not by themselves prove a
 latency improvement; compare implementations at the same Recall on the target workload.
 

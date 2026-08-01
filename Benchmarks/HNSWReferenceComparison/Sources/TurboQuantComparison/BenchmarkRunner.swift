@@ -309,10 +309,18 @@ struct BenchmarkRunner {
             bitWidth: bitWidth,
             requestedTarget: requestedTarget
         ) {
-            let turboStart = ContinuousClock.now
-            let turbo: TurboQuantIndex
-            if objective == .innerProduct {
-                turbo = try TurboQuantIndex(
+            let comparesMSEBackends = ProcessInfo.processInfo.environment[
+                "TURBOQUANT_MSE_BACKEND_COMPARISON"
+            ] == "1" && objective == .meanSquaredError && bitWidth == 4
+            let backendCases: [(suffix: String?, backend: TurboQuantFourBitBackend)] =
+                comparesMSEBackends
+                ? [("platform", .platform), ("swift-direct", .swiftDirect)]
+                : [(nil, .platform)]
+
+            for backendCase in backendCases {
+                let targetName = backendCase.suffix.map { "\(name)-\($0)" } ?? name
+                let turboStart = ContinuousClock.now
+                let turbo = try TurboQuantIndex(
                     dimensions: benchmarkCase.dimensions,
                     maxElements: benchmarkCase.count,
                     bitWidth: bitWidth,
@@ -322,55 +330,44 @@ struct BenchmarkRunner {
                         efConstruction: 200
                     ),
                     seed: 42,
+                    fourBitBackend: backendCase.backend,
                     qjlPruningMode: qjlPruningMode,
                     collectQJLPruningStatistics:
                         collectQJLPruningStatistics
                 )
-            } else {
-                turbo = try TurboQuantIndex(
-                    dimensions: benchmarkCase.dimensions,
-                    maxElements: benchmarkCase.count,
-                    bitWidth: bitWidth,
-                    objective: objective,
-                    configuration: HNSWConfiguration(
-                        m: 16,
-                        efConstruction: 200
-                    ),
-                    seed: 42
+                for (label, vector) in vectors.enumerated() {
+                    try turbo.add(vector, label: UInt64(label))
+                }
+                try turbo.finalize()
+                let turboBuildMilliseconds = milliseconds(
+                    from: turboStart.duration(to: .now)
+                )
+                print(
+                    "build index=\(targetName) bits=\(bitWidth) " +
+                    "ms=\(format(turboBuildMilliseconds)) " +
+                    "input_vector_bytes=" +
+                    "\(benchmarkCase.count * benchmarkCase.dimensions * 4) " +
+                    "retained_packed_record_bytes=" +
+                    "\(benchmarkCase.count * turbo.bytesPerVector) " +
+                    "shared_projection_bytes=\(turbo.projectionBytes)"
+                )
+                targets.append(
+                    SearchTarget(
+                        name: targetName,
+                        bitWidth: bitWidth,
+                        setEfSearch: { try turbo.setEfSearch($0) },
+                        search: { try turbo.search($0, k: benchmarkCase.k) },
+                        resetQJLPruningStatistics:
+                            objective == .innerProduct && collectQJLPruningStatistics
+                            ? { turbo.resetQJLPruningStatistics() }
+                            : nil,
+                        qjlPruningStatistics:
+                            objective == .innerProduct && collectQJLPruningStatistics
+                            ? { turbo.qjlPruningStatistics() }
+                            : nil
+                    )
                 )
             }
-            for (label, vector) in vectors.enumerated() {
-                try turbo.add(vector, label: UInt64(label))
-            }
-            try turbo.finalize()
-            let turboBuildMilliseconds = milliseconds(
-                from: turboStart.duration(to: .now)
-            )
-            print(
-                "build index=\(name) bits=\(bitWidth) " +
-                "ms=\(format(turboBuildMilliseconds)) " +
-                "input_vector_bytes=" +
-                "\(benchmarkCase.count * benchmarkCase.dimensions * 4) " +
-                "retained_packed_record_bytes=" +
-                "\(benchmarkCase.count * turbo.bytesPerVector) " +
-                "shared_projection_bytes=\(turbo.projectionBytes)"
-            )
-            targets.append(
-                SearchTarget(
-                    name: name,
-                    bitWidth: bitWidth,
-                    setEfSearch: { try turbo.setEfSearch($0) },
-                    search: { try turbo.search($0, k: benchmarkCase.k) },
-                    resetQJLPruningStatistics:
-                        objective == .innerProduct && collectQJLPruningStatistics
-                        ? { turbo.resetQJLPruningStatistics() }
-                        : nil,
-                    qjlPruningStatistics:
-                        objective == .innerProduct && collectQJLPruningStatistics
-                        ? { turbo.qjlPruningStatistics() }
-                        : nil
-                )
-            )
         }
         guard !targets.isEmpty else {
             throw BenchmarkRunnerError.unsupportedTarget(

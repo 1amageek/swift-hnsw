@@ -1,24 +1,37 @@
 # CTurboQuantKernels Portability Verification
 
-`CTurboQuantKernels` is now an active production dependency for the four-bit
-MSE inner-product path. The target exposes a portable C kernel on every
-supported build and reports ARM64 NEON as an additional specialization only
-when the compiler target provides it.
+> Historical 1.1.2 artifact. The latest follow-up remeasures C and Swift under
+> matched conditions and retains C on every verified production target. See the
+> [Swift/C backend decision](../2026-08-01-swift-c-parity/README.md).
+
+`CTurboQuantKernels` is an active production dependency for the four-bit MSE
+inner-product path. The platform entry point selects ARM64 NEON only when the
+compiler target provides it and otherwise executes the portable scalar C path.
 
 ```text
 SwiftHNSW
     -> CTurboQuantKernels
         -> ARM64 NEON kernel (Native ARM64)
-        -> portable C kernel (Native non-ARM, regular WASM, Embedded WASM)
+        -> portable C kernel (regular WASM, Embedded WASM)
 ```
 
 ## Target evidence
 
 | Target | C compile | C target link | Swift selection |
 | --- | --- | --- | --- |
-| Native arm64 | Passed | Passed | `has_four_bit_inner_product_kernel == 1`, NEON specialization enabled |
-| regular WASM | `clang -target wasm32-unknown-wasip1` passed | `CTurboQuantKernels.o` linked into `SwiftHNSW.o` | portable C kernel selected |
-| Embedded WASM | `clang -target wasm32-unknown-wasip1 -D__EMBEDDED_SWIFT__` passed | `CTurboQuantKernels.o` linked into `SwiftHNSW.o` | portable C kernel selected |
+| Native arm64 | Passed | Passed | Platform differential test passed; NEON specialization compiled |
+| regular WASM | Passed | Passed | Portable C differential check and runtime benchmark passed |
+| Embedded WASM | Passed | Passed | Portable C differential check and runtime benchmark passed |
+| macOS x86_64 | C target only | Not a supported package build | Float16 package APIs are unavailable for this destination in the fixed toolchain |
+
+The WASM rows verify the production kernel boundary, not a complete index
+lifecycle. A minimal public `HNSWIndex<Float>.add` smoke run on the fixed regular
+WASM snapshot traps in generic buffer metadata before the C kernel is reached.
+Concrete construction experiments progressed through insertion but later
+trapped while releasing the generic temporary HNSW builder. Retaining that
+builder indefinitely would violate `TurboQuantIndex.finalize()`'s memory-release
+contract, so no leak-based workaround is included and end-to-end WASM index
+support is not claimed.
 
 The portable path decodes the sixteen Float32 centroids once per call, then
 uses four accumulators over packed bytes. It does not depend on Objective-C,
@@ -26,11 +39,15 @@ Foundation, libc-specific extensions, threads, or platform SIMD intrinsics.
 The ARM64 path retains its existing NEON table-lookup implementation; its
 scalar tail still uses the original byte-plane decode.
 
-## Native correctness and performance check
+## Correctness and performance check
 
-The direct four-bit kernel test passed for dimensions 17, 128, and 768. The
-full Native suite passed with 116 tests in 13 suites; Address Sanitizer passed
-11 ScalarQuantizer tests and Thread Sanitizer passed the concurrent TurboQuant
-search test. A paired d=768 MSE 4-bit run preserved Recall@10 and checksums at
-every `efSearch`; CPU-QPS differences were within host noise, so no standalone
-MSE speedup claim is made for the unchanged NEON path.
+The platform four-bit test covers dimensions 17, 128, and 768. The explicit
+portable C differential test covers dimensions 1 through the critical odd,
+even, vector-width, and tail boundaries up to 769. A d=768 direct scoring
+benchmark verifies every score before timing it. At 16 candidates, portable C
+was 1.55x faster than pure Swift on the Native ARM64 host and regular WASM, and
+1.67x on Embedded WASM. The advantage grows when the Swift path
+constructs its packed lookup table at 32 or more candidates.
+
+Exact commands, toolchain metadata, and raw samples are stored in
+[`../2026-08-01-cturboquant-backend-selection`](../2026-08-01-cturboquant-backend-selection/README.md).

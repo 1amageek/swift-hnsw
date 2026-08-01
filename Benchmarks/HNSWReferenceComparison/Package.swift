@@ -23,6 +23,11 @@ let package = Package(
                 .headerSearchPath("include")
             ]
         ),
+        .target(
+            name: "CTurboQuantBenchmarkReference",
+            path: "Sources/CTurboQuantBenchmarkReference",
+            publicHeadersPath: "include"
+        ),
         .executableTarget(
             name: "HNSWReferenceComparison",
             dependencies: [
@@ -32,6 +37,19 @@ let package = Package(
         ),
         .executableTarget(
             name: "TurboQuantComparison",
+            dependencies: [
+                .product(name: "SwiftHNSW", package: "swift-hnsw")
+            ]
+        ),
+        .executableTarget(
+            name: "TurboQuantKernelComparison",
+            dependencies: [
+                .product(name: "SwiftHNSW", package: "swift-hnsw"),
+                "CTurboQuantBenchmarkReference"
+            ]
+        ),
+        .executableTarget(
+            name: "TurboQuantConcurrencyCheck",
             dependencies: [
                 .product(name: "SwiftHNSW", package: "swift-hnsw")
             ]

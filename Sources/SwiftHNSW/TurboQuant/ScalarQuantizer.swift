@@ -1,4 +1,6 @@
+#if canImport(CTurboQuantKernels)
 import CTurboQuantKernels
+#endif
 
 /// Scalar quantizer using Lloyd-Max centroids for a rotated sphere coordinate.
 ///
@@ -6,9 +8,6 @@ import CTurboQuantKernels
 /// The exact Haar strategy numerically integrates the finite-dimensional coordinate density
 /// proportional to `(1 - x^2)^((d - 3) / 2)` on `[-1, 1]`.
 struct ScalarQuantizer: Sendable {
-
-    static let hasFourBitInnerProductKernel =
-        swift_hnsw_turboquant_has_four_bit_inner_product_kernel() != 0
 
     /// Quantization bit-width (0, 1, 2, 3, or 4)
     let bitWidth: Int
@@ -28,8 +27,10 @@ struct ScalarQuantizer: Sendable {
     /// Bytes per packed quantized vector
     let packedSize: Int
 
-    /// Four little-endian byte planes for the exact Float32 centroid table.
+#if arch(arm64) && canImport(CTurboQuantKernels)
+    /// Four little-endian byte planes for the ARM64 NEON centroid table.
     private let fourBitCentroidBytePlanes: [UInt8]
+#endif
 
     init(
         bitWidth: Int,
@@ -62,6 +63,7 @@ struct ScalarQuantizer: Sendable {
         self.boundaries = bounds
 
         self.packedSize = BitPacking.packedSize(count: dimension, bitWidth: bitWidth)
+#if arch(arm64) && canImport(CTurboQuantKernels)
         if bitWidth == 4 {
             var bytePlanes = [UInt8](repeating: 0, count: 64)
             for centroidIndex in 0..<16 {
@@ -76,6 +78,7 @@ struct ScalarQuantizer: Sendable {
         } else {
             self.fourBitCentroidBytePlanes = []
         }
+#endif
     }
 
     /// Quantize and pack a rotated vector into compact bytes.
@@ -390,15 +393,16 @@ struct ScalarQuantizer: Sendable {
     }
 
     /// Computes the exact Float32 four-bit centroid dot product through the
-    /// platform kernel without constructing a per-query packed lookup table.
+    /// platform-selected direct kernel without constructing a lookup table.
     @inline(__always)
     func fourBitInnerProduct(
         from packed: UnsafeBufferPointer<UInt8>,
         query: UnsafeBufferPointer<Float>
     ) -> Float {
-        precondition(bitWidth == 4, "Native four-bit lookup requires four-bit codes")
+        precondition(bitWidth == 4, "Direct four-bit lookup requires four-bit codes")
         precondition(packed.count >= packedSize, "Packed vector is truncated")
         precondition(query.count == dimension, "Query dimension must match")
+#if arch(arm64) && canImport(CTurboQuantKernels)
         // The Arrays that produced these buffers retain every initialized element for this
         // synchronous borrow. The validated counts bound all byte and Float32 loads, the
         // buffers are independently owned, and the C kernel neither stores nor returns a pointer.
@@ -409,6 +413,99 @@ struct ScalarQuantizer: Sendable {
                 dimension,
                 bytePlanes.baseAddress!
             )
+        }
+#elseif canImport(CTurboQuantKernels)
+        return scalarCFourBitInnerProduct(from: packed, query: query)
+#else
+        return directFourBitInnerProduct(from: packed, query: query)
+#endif
+    }
+
+#if canImport(CTurboQuantKernels)
+    /// Computes the scalar C result for differential testing and non-ARM production targets.
+    ///
+    /// The Arrays retain all initialized elements for this synchronous borrow. Validated
+    /// counts bound every C load, the buffers do not overlap, and no pointer escapes.
+    @inline(__always)
+    func scalarCFourBitInnerProduct(
+        from packed: UnsafeBufferPointer<UInt8>,
+        query: UnsafeBufferPointer<Float>
+    ) -> Float {
+        precondition(bitWidth == 4, "Scalar four-bit lookup requires four-bit codes")
+        precondition(packed.count >= packedSize, "Packed vector is truncated")
+        precondition(query.count == dimension, "Query dimension must match")
+        return centroids.withUnsafeBufferPointer { centroidTable in
+            swift_hnsw_turboquant_four_bit_inner_product_scalar(
+                packed.baseAddress!,
+                query.baseAddress!,
+                dimension,
+                centroidTable.baseAddress!
+            )
+        }
+    }
+#endif
+
+    /// Computes the exact Float32 four-bit centroid dot product directly in Swift.
+    ///
+    /// The caller retains both initialized input buffers for this synchronous borrow.
+    /// Validated counts bound every packed-code, query, and immutable centroid access;
+    /// no pointer escapes and this method performs no allocation or memory rebinding.
+    @inline(__always)
+    func directFourBitInnerProduct(
+        from packed: UnsafeBufferPointer<UInt8>,
+        query: UnsafeBufferPointer<Float>
+    ) -> Float {
+        precondition(bitWidth == 4, "Direct four-bit lookup requires four-bit codes")
+        precondition(packed.count >= packedSize, "Packed vector is truncated")
+        precondition(query.count == dimension, "Query dimension must match")
+
+        return centroids.withUnsafeBufferPointer { centroidTable in
+            let pairCount = dimension / 2
+            var byteIndex = 0
+            var accumulator0: Float = 0
+            var accumulator1: Float = 0
+            var accumulator2: Float = 0
+            var accumulator3: Float = 0
+
+            while byteIndex + 4 <= pairCount {
+                let coordinate = byteIndex * 2
+                let packed0 = packed[byteIndex]
+                let packed1 = packed[byteIndex + 1]
+                let packed2 = packed[byteIndex + 2]
+                let packed3 = packed[byteIndex + 3]
+                accumulator0 += query[coordinate]
+                    * centroidTable[Int(packed0 >> 4)]
+                accumulator0 += query[coordinate + 1]
+                    * centroidTable[Int(packed0 & 0x0F)]
+                accumulator1 += query[coordinate + 2]
+                    * centroidTable[Int(packed1 >> 4)]
+                accumulator1 += query[coordinate + 3]
+                    * centroidTable[Int(packed1 & 0x0F)]
+                accumulator2 += query[coordinate + 4]
+                    * centroidTable[Int(packed2 >> 4)]
+                accumulator2 += query[coordinate + 5]
+                    * centroidTable[Int(packed2 & 0x0F)]
+                accumulator3 += query[coordinate + 6]
+                    * centroidTable[Int(packed3 >> 4)]
+                accumulator3 += query[coordinate + 7]
+                    * centroidTable[Int(packed3 & 0x0F)]
+                byteIndex += 4
+            }
+
+            var total = accumulator0 + accumulator1 + accumulator2 + accumulator3
+            while byteIndex < pairCount {
+                let coordinate = byteIndex * 2
+                let code = packed[byteIndex]
+                total += query[coordinate] * centroidTable[Int(code >> 4)]
+                total += query[coordinate + 1]
+                    * centroidTable[Int(code & 0x0F)]
+                byteIndex += 1
+            }
+            if dimension & 1 != 0 {
+                total += query[dimension - 1]
+                    * centroidTable[Int(packed[pairCount] >> 4)]
+            }
+            return total
         }
     }
 

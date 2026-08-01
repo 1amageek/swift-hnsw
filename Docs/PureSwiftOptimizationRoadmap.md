@@ -71,10 +71,13 @@ Measured search latency and build throughput were faster than the hnswlib refere
 - Latency-sensitive callers can use `search(_:k:into:)` to reuse result buffers.
 - Reference comparison benchmarks record median and p95 search latency across repeated search iterations.
 - Serialization still writes the existing graph format for compatibility.
-- `CTurboQuantKernels` is a required C target for the four-bit MSE inner
-  product. Its portable path is selected on Native non-ARM, regular WASM, and
-  Embedded WASM; the ARM64 NEON path is selected only when the target advertises
-  NEON.
+- The four-bit MSE inner product uses ARM64 NEON on Native ARM64 and the scalar
+  C kernel on regular WASM, Embedded WASM, and other linked targets. The direct
+  Swift implementation remains a differential and benchmarking reference. C
+  was retained because it measured 1.044x to 1.067x faster on the verified WASM
+  targets; Native end-to-end search measured a 1.997x to 2.135x production
+  advantage. WASM runtime evidence remains limited to the kernel boundary
+  because the fixed snapshot traps in generic HNSW construction metadata.
 - TurboQuant QJL lookup reduction remains pure Swift. Its hot loop borrows
   packed signs and the lookup table through `UnsafeBufferPointer`, loads eight
   sign bytes with a bounded unaligned `UInt64` read (with a four-byte fallback),

@@ -70,6 +70,7 @@ public final class TurboQuantIndex: Sendable {
     private let msePackedSize: Int
     private let qjlPackedSize: Int
     private let _packedSize: Int
+    private let fourBitBackend: TurboQuantFourBitBackend
     private let usesFourBitKernel: Bool
     private let qjlPruningMode: TurboQuantQJLPruningMode
     private let qjlScale: Float
@@ -99,8 +100,7 @@ public final class TurboQuantIndex: Sendable {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
-            fourBitKernelAvailable:
-                ScalarQuantizer.hasFourBitInnerProductKernel,
+            fourBitBackend: .platform,
             qjlPruningMode: .automatic,
             createsBuilder: true
         )
@@ -116,34 +116,7 @@ public final class TurboQuantIndex: Sendable {
         rotationStrategy: TurboQuantRotationStrategy = .structuredHadamard,
         configuration: HNSWConfiguration = .balanced,
         seed: UInt64 = 42,
-        qjlPruningMode: TurboQuantQJLPruningMode,
-        collectQJLPruningStatistics: Bool = false
-    ) throws {
-        try self.init(
-            dimensions: dimensions,
-            maxElements: maxElements,
-            bitWidth: bitWidth,
-            objective: objective,
-            rotationStrategy: rotationStrategy,
-            configuration: configuration,
-            seed: seed,
-            fourBitKernelAvailable:
-                ScalarQuantizer.hasFourBitInnerProductKernel,
-            qjlPruningMode: qjlPruningMode,
-            collectQJLPruningStatistics: collectQJLPruningStatistics,
-            createsBuilder: true
-        )
-    }
-
-    convenience init(
-        dimensions: Int,
-        maxElements: Int,
-        bitWidth: Int,
-        objective: TurboQuantObjective,
-        rotationStrategy: TurboQuantRotationStrategy,
-        configuration: HNSWConfiguration,
-        seed: UInt64,
-        fourBitKernelAvailable: Bool,
+        fourBitBackend: TurboQuantFourBitBackend = .platform,
         qjlPruningMode: TurboQuantQJLPruningMode = .automatic,
         collectQJLPruningStatistics: Bool = false
     ) throws {
@@ -155,7 +128,7 @@ public final class TurboQuantIndex: Sendable {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
-            fourBitKernelAvailable: fourBitKernelAvailable,
+            fourBitBackend: fourBitBackend,
             qjlPruningMode: qjlPruningMode,
             collectQJLPruningStatistics: collectQJLPruningStatistics,
             createsBuilder: true
@@ -170,7 +143,7 @@ public final class TurboQuantIndex: Sendable {
         rotationStrategy: TurboQuantRotationStrategy,
         configuration: HNSWConfiguration,
         seed: UInt64,
-        fourBitKernelAvailable: Bool,
+        fourBitBackend: TurboQuantFourBitBackend,
         qjlPruningMode: TurboQuantQJLPruningMode,
         collectQJLPruningStatistics: Bool = false,
         createsBuilder: Bool
@@ -273,7 +246,7 @@ public final class TurboQuantIndex: Sendable {
         }
         let packedSize = msePackedSize + qjlPackedSize + residualNormSize
         let usesFourBitKernel = mseBitWidth == 4
-            && fourBitKernelAvailable
+            && fourBitBackend != .swiftLookup
         let supportsPackedLookup = mseBitWidth == 1
             || mseBitWidth == 2
             || (
@@ -347,6 +320,7 @@ public final class TurboQuantIndex: Sendable {
         self.msePackedSize = msePackedSize
         self.qjlPackedSize = qjlPackedSize
         self._packedSize = packedSize
+        self.fourBitBackend = fourBitBackend
         self.usesFourBitKernel = usesFourBitKernel
         self.qjlPruningMode = qjlPruningMode
         self.qjlScale = objective == .innerProduct
@@ -1110,10 +1084,17 @@ public final class TurboQuantIndex: Sendable {
         if mseBitWidth == 0 {
             mseInnerProduct = 0
         } else if usesFourBitKernel {
-            mseInnerProduct = quantizer.fourBitInnerProduct(
-                from: mseCode,
-                query: mseQuery
-            )
+            if fourBitBackend == .platform {
+                mseInnerProduct = quantizer.fourBitInnerProduct(
+                    from: mseCode,
+                    query: mseQuery
+                )
+            } else {
+                mseInnerProduct = quantizer.directFourBitInnerProduct(
+                    from: mseCode,
+                    query: mseQuery
+                )
+            }
         } else if !packedDistanceTable.isEmpty {
             mseInnerProduct = quantizer.packedInnerProduct(
                 from: mseCode,
@@ -1430,8 +1411,7 @@ extension TurboQuantIndex {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
-            fourBitKernelAvailable:
-                ScalarQuantizer.hasFourBitInnerProductKernel,
+            fourBitBackend: .platform,
             qjlPruningMode: .automatic,
             createsBuilder: false
         )

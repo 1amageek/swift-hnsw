@@ -60,11 +60,6 @@ struct BitPackingTests {
 @Suite("ScalarQuantizer Tests")
 struct ScalarQuantizerTests {
 
-    @Test("Four-bit C kernel is linked")
-    func fourBitKernelIsLinked() {
-        #expect(ScalarQuantizer.hasFourBitInnerProductKernel)
-    }
-
     @Test("Codebook symmetry", arguments: [0, 1, 2, 3, 4])
     func codebookSymmetry(b: Int) {
         let sq = ScalarQuantizer(bitWidth: b, dimension: 128)
@@ -211,8 +206,11 @@ struct ScalarQuantizerTests {
         #expect(abs(packedDistance - decodedDistance) < 1e-5)
     }
 
-    @Test("Four-bit platform kernel matches decoded score", arguments: [17, 128, 768])
-    func fourBitPlatformKernelMatchesDecodedScore(dimension: Int) {
+    @Test(
+        "Four-bit kernels match decoded score",
+        arguments: [1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 127, 128, 129, 767, 768, 769]
+    )
+    func fourBitKernelsMatchDecodedScore(dimension: Int) {
         let quantizer = ScalarQuantizer(bitWidth: 4, dimension: dimension)
         let query = (0..<dimension).map { index in
             Float((index * 7 % 23) - 11) / 13
@@ -229,11 +227,29 @@ struct ScalarQuantizerTests {
                 )
             }
         }
+        let directScore = packed.withUnsafeBufferPointer { packedBuffer in
+            query.withUnsafeBufferPointer { queryBuffer in
+                quantizer.directFourBitInnerProduct(
+                    from: packedBuffer,
+                    query: queryBuffer
+                )
+            }
+        }
+        let scalarCScore = packed.withUnsafeBufferPointer { packedBuffer in
+            query.withUnsafeBufferPointer { queryBuffer in
+                quantizer.scalarCFourBitInnerProduct(
+                    from: packedBuffer,
+                    query: queryBuffer
+                )
+            }
+        }
         let decoded = quantizer.dequantize(packed)
         let decodedScore = zip(query, decoded).reduce(Float.zero) { partial, pair in
             partial + pair.0 * pair.1
         }
         #expect(abs(platformScore - decodedScore) < 1e-4)
+        #expect(abs(scalarCScore - decodedScore) < 1e-4)
+        #expect(abs(directScore - decodedScore) < 1e-4)
     }
 
     @Test("Four-bit fallback coordinate and packed paths agree")
@@ -252,7 +268,7 @@ struct ScalarQuantizerTests {
                 efSearch: 31
             ),
             seed: 42,
-            fourBitKernelAvailable: false
+            fourBitBackend: .swiftLookup
         )
         for vectorIndex in 0..<vectorCount {
             let vector = (0..<dimension).map { coordinate in

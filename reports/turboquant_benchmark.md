@@ -215,10 +215,13 @@ high and low nibbles in coordinate order, reconstructs four-byte centroids with
 NEON table lookups and zip operations, then accumulates with four independent
 FMA chains. Odd and non-multiple-of-sixteen dimensions use a scalar tail.
 
-The non-NEON path remains functional through the portable C four-bit kernel,
-which is compiled and linked for Native, regular WASM, and Embedded WASM. The
-ARM64 NEON path is selected only when its target advertises NEON; other targets
-do not silently execute ARM-specific instructions. Product 5-bit still
+The WASM paths use the measured scalar C four-bit kernel. ARM64 selects the NEON
+specialization, and other targets cannot execute ARM-specific instructions.
+The direct Swift implementation remains available through benchmarking SPI for
+differential checks and controlled performance comparisons. Native x86_64 is
+not claimed as a package destination because Float16 is unavailable there in
+the fixed toolchain.
+Product 5-bit still
 performs its QJL projection and residual estimate. The production initializer
 uses an automatic pruning policy: the conservative QJL bound is enabled at the
 calibrated `efSearch >= 100` boundary. Benchmark
@@ -276,20 +279,28 @@ policy summaries are stored in
 
 | Verification | Result |
 | --- | --- |
-| Native package tests | 116 tests in 13 suites passed, 0 failed; benchmark cases skipped |
-| Address Sanitizer | TurboQuant Product suite passed (8 tests) |
-| Thread Sanitizer | Concurrent TurboQuant search passed; no race reported |
-| Undefined Behavior Sanitizer | 10 quantizer/kernel/fallback tests passed after explicitly linking the snapshot runtime |
-| Regular WASM final-source build | Compile and link passed |
-| Embedded WASM final-source build | Compile and link passed |
+| Native package tests | 115 tests in 13 suites passed, 0 failed; benchmark cases skipped |
+| Address Sanitizer | Standalone production-kernel comparison completed with no memory error reported |
+| Thread Sanitizer | Eight tasks completed 100 concurrent searches each with identical results and no race reported |
+| Undefined Behavior Sanitizer | Toolchain blocked: SwiftPM instrumented the C object but failed to link the UBSan runtime (`__ubsan_*` symbols were unresolved) |
+| Regular WASM scalar C kernel | Compile/link, differential check, and three-process runtime benchmark passed; 1.044x–1.067x faster than Swift direct |
+| Embedded WASM scalar C kernel | Compile/link, differential check, and three-process runtime benchmark passed; 1.044x–1.061x faster than Swift direct |
 | Archive validation | Version, metadata, address ranges, retained graph/search budgets, padding, topology, residual bounds, and truncation failures tested |
 
 The current snapshot cannot compile the package's existing `Float16` APIs for
 an x86_64 macOS destination, so a Rosetta package-level run was unavailable.
-The portable C branch is compiled and linked for regular WASM and Embedded WASM;
-the Native ARM64 build selects the NEON branch. Coordinate-table and packed-table
-searches remain covered by the explicit `fourBitKernelAvailable: false` test
-configuration and produced the same labels and distances.
+Regular WASM and Embedded WASM compile and link the scalar `CTurboQuantKernels`
+branch; Native ARM64 selects the NEON branch. The Swift direct and lookup paths
+remain explicit benchmarking backends and produced equivalent scores. Final
+three-process kernel samples and two Native end-to-end search runs are stored in
+[`benchmark-artifacts/2026-08-01-swift-c-parity`](benchmark-artifacts/2026-08-01-swift-c-parity/README.md).
+
+This WASM validation stops at the production kernel boundary. The fixed
+snapshot traps in generic `HNSWIndex<Float>` construction metadata before a
+complete `TurboQuantIndex` lifecycle can reach scoring. A concrete construction
+experiment also exposed a later generic builder-deallocation trap, so retaining
+the builder as a leak was rejected. Full end-to-end WASM index support remains
+outside the verified result.
 
 ### Shared-state review matrix
 
@@ -297,6 +308,8 @@ configuration and produced the same labels and distances.
 | --- | --- | --- | --- | --- | --- |
 | `HNSWIndex.State` | `Mutex<State>` | `Mutex<State>` | `Mutex<State>` | `withLock` | Owner lifetime |
 | `TurboQuantIndex.State` | `Mutex<State>` | `Mutex<State>` | `Mutex<State>` | `withLock` | `finalize()` releases the Float builder; owner lifetime releases packed state |
+| Four-bit benchmark lookup storage | `Mutex<State>` | `Mutex<State>` | `Mutex<State>` | `withLock` | Harness owner lifetime |
+| Scalar C benchmark reference | Immutable centroid owner plus `Mutex<Void>` | Same | Same | One `withLock` per query, matching the library harness | Harness owner lifetime |
 | Quantizer, rotation, and QJL parameters | Immutable `Sendable` values | Same | Same | Borrowed synchronous reads | Owner lifetime |
 
 There is no `hasFeature(Embedded)` or `canImport(Synchronization)` branch in the
@@ -306,6 +319,10 @@ and result materialization execute under the same state boundary on every target
 Thread Sanitizer reported no race, but its runtime emitted an `Invalid dyld module map`
 warning and stated that backtraces might be unreliable. The concurrent behavior tests
 completed successfully; the sanitizer warning remains a tooling limitation.
+Undefined Behavior Sanitizer did not run: the fixed snapshot instrumented the ARM64
+C kernel and then failed to link the sanitizer runtime. This is recorded as unverified,
+not as a successful UBSan result. Differential boundary tests and Address Sanitizer
+cover the direct Swift implementation on the available host configuration.
 
 The fixed WASM SDK identifiers are:
 

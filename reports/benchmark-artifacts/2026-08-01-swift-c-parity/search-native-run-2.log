@@ -1,0 +1,95 @@
+turboquant_benchmark toolchain_identifier=org.swift.64202607231a
+turboquant_benchmark compiler=Apple_Swift_version_6.4-dev_(LLVM_264fd65923c28d9,_Swift_ef761e567dc94ee)_Target:_arm64-apple-macosx27.0.0_Build_config:_+assertions
+turboquant_benchmark comparison=HNSW cosine vs TurboQuant MSE and product objectives
+turboquant_benchmark run_id=search-native-2
+turboquant_benchmark source_revision=238aeb6539f41849699d7360b8b83f62a76e5e46
+turboquant_benchmark source_state=dirty
+turboquant_benchmark measurement_mode=isolated target=turboquant-mse-4
+turboquant_benchmark qjl_pruning=automatic
+case=n10k-d768 n=10000 d=768 q=50 k=10
+build index=turboquant-mse-platform bits=4 ms=5848.548 input_vector_bytes=30720000 retained_packed_record_bytes=5120000 shared_projection_bytes=0
+build index=turboquant-mse-swift-direct bits=4 ms=5843.099 input_vector_bytes=30720000 retained_packed_record_bytes=5120000 shared_projection_bytes=0
+sample phase=batch index=turboquant-mse-platform bits=4 ef=10 trial=0 wall_ms=2.309 cpu_ms=2.308 checksum=2234350
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=10 trial=0 wall_ms=4.449 cpu_ms=4.449 checksum=2234350
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=10 trial=1 wall_ms=4.364 cpu_ms=4.364 checksum=2234351
+sample phase=batch index=turboquant-mse-platform bits=4 ef=10 trial=1 wall_ms=2.249 cpu_ms=2.249 checksum=2234351
+sample phase=batch index=turboquant-mse-platform bits=4 ef=10 trial=2 wall_ms=2.158 cpu_ms=2.157 checksum=2234352
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=10 trial=2 wall_ms=4.396 cpu_ms=4.395 checksum=2234352
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=10 trial=3 wall_ms=4.336 cpu_ms=4.336 checksum=2234353
+sample phase=batch index=turboquant-mse-platform bits=4 ef=10 trial=3 wall_ms=2.219 cpu_ms=2.220 checksum=2234353
+sample phase=batch index=turboquant-mse-platform bits=4 ef=10 trial=4 wall_ms=2.155 cpu_ms=2.154 checksum=2234354
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=10 trial=4 wall_ms=4.388 cpu_ms=4.389 checksum=2234354
+search index=turboquant-mse-platform bits=4 ef=10 median_ms_per_query=0.044 p95_ms_per_query=0.058 qps=22528.865 cpu_ms_per_query=0.044 cpu_qps=22522.523 recall_at_10=0.070 checksum=13406110
+search index=turboquant-mse-swift-direct bits=4 ef=10 median_ms_per_query=0.088 p95_ms_per_query=0.120 qps=11393.955 cpu_ms_per_query=0.088 cpu_qps=11392.117 recall_at_10=0.070 checksum=13406110
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=20 trial=0 wall_ms=7.797 cpu_ms=7.798 checksum=2181434
+sample phase=batch index=turboquant-mse-platform bits=4 ef=20 trial=0 wall_ms=3.756 cpu_ms=3.757 checksum=2181434
+sample phase=batch index=turboquant-mse-platform bits=4 ef=20 trial=1 wall_ms=3.611 cpu_ms=3.610 checksum=2181435
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=20 trial=1 wall_ms=7.791 cpu_ms=7.790 checksum=2181435
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=20 trial=2 wall_ms=7.693 cpu_ms=7.692 checksum=2181436
+sample phase=batch index=turboquant-mse-platform bits=4 ef=20 trial=2 wall_ms=3.725 cpu_ms=3.725 checksum=2181436
+sample phase=batch index=turboquant-mse-platform bits=4 ef=20 trial=3 wall_ms=3.619 cpu_ms=3.619 checksum=2181437
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=20 trial=3 wall_ms=7.795 cpu_ms=7.796 checksum=2181437
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=20 trial=4 wall_ms=7.699 cpu_ms=7.699 checksum=2181438
+sample phase=batch index=turboquant-mse-platform bits=4 ef=20 trial=4 wall_ms=3.790 cpu_ms=3.782 checksum=2181438
+search index=turboquant-mse-platform bits=4 ef=20 median_ms_per_query=0.074 p95_ms_per_query=0.102 qps=13423.269 cpu_ms_per_query=0.074 cpu_qps=13422.819 recall_at_10=0.142 checksum=13088614
+search index=turboquant-mse-swift-direct bits=4 ef=20 median_ms_per_query=0.156 p95_ms_per_query=0.210 qps=6418.039 cpu_ms_per_query=0.156 cpu_qps=6418.485 recall_at_10=0.142 checksum=13088614
+sample phase=batch index=turboquant-mse-platform bits=4 ef=40 trial=0 wall_ms=6.090 cpu_ms=6.091 checksum=2127933
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=40 trial=0 wall_ms=12.865 cpu_ms=12.853 checksum=2127933
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=40 trial=1 wall_ms=12.831 cpu_ms=12.830 checksum=2127934
+sample phase=batch index=turboquant-mse-platform bits=4 ef=40 trial=1 wall_ms=6.204 cpu_ms=6.204 checksum=2127934
+sample phase=batch index=turboquant-mse-platform bits=4 ef=40 trial=2 wall_ms=5.918 cpu_ms=5.918 checksum=2127935
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=40 trial=2 wall_ms=12.884 cpu_ms=12.884 checksum=2127935
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=40 trial=3 wall_ms=12.783 cpu_ms=12.784 checksum=2127936
+sample phase=batch index=turboquant-mse-platform bits=4 ef=40 trial=3 wall_ms=6.064 cpu_ms=6.064 checksum=2127936
+sample phase=batch index=turboquant-mse-platform bits=4 ef=40 trial=4 wall_ms=5.994 cpu_ms=5.994 checksum=2127937
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=40 trial=4 wall_ms=12.927 cpu_ms=12.928 checksum=2127937
+search index=turboquant-mse-platform bits=4 ef=40 median_ms_per_query=0.121 p95_ms_per_query=0.162 qps=8245.043 cpu_ms_per_query=0.121 cpu_qps=8245.383 recall_at_10=0.208 checksum=12767608
+search index=turboquant-mse-swift-direct bits=4 ef=40 median_ms_per_query=0.257 p95_ms_per_query=0.349 qps=3886.413 cpu_ms_per_query=0.257 cpu_qps=3890.142 recall_at_10=0.208 checksum=12767608
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=60 trial=0 wall_ms=17.427 cpu_ms=17.428 checksum=2154952
+sample phase=batch index=turboquant-mse-platform bits=4 ef=60 trial=0 wall_ms=8.164 cpu_ms=8.165 checksum=2154952
+sample phase=batch index=turboquant-mse-platform bits=4 ef=60 trial=1 wall_ms=7.950 cpu_ms=7.950 checksum=2154953
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=60 trial=1 wall_ms=17.505 cpu_ms=17.505 checksum=2154953
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=60 trial=2 wall_ms=17.226 cpu_ms=17.227 checksum=2154954
+sample phase=batch index=turboquant-mse-platform bits=4 ef=60 trial=2 wall_ms=8.246 cpu_ms=8.246 checksum=2154954
+sample phase=batch index=turboquant-mse-platform bits=4 ef=60 trial=3 wall_ms=7.981 cpu_ms=7.980 checksum=2154955
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=60 trial=3 wall_ms=17.420 cpu_ms=17.421 checksum=2154955
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=60 trial=4 wall_ms=17.198 cpu_ms=17.197 checksum=2154956
+sample phase=batch index=turboquant-mse-platform bits=4 ef=60 trial=4 wall_ms=8.261 cpu_ms=8.262 checksum=2154956
+search index=turboquant-mse-platform bits=4 ef=60 median_ms_per_query=0.163 p95_ms_per_query=0.186 qps=6124.199 cpu_ms_per_query=0.163 cpu_qps=6123.699 recall_at_10=0.288 checksum=12929722
+search index=turboquant-mse-swift-direct bits=4 ef=60 median_ms_per_query=0.348 p95_ms_per_query=0.395 qps=2870.216 cpu_ms_per_query=0.348 cpu_qps=2870.099 recall_at_10=0.288 checksum=12929722
+sample phase=batch index=turboquant-mse-platform bits=4 ef=100 trial=0 wall_ms=12.078 cpu_ms=12.064 checksum=2152320
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=100 trial=0 wall_ms=25.641 cpu_ms=25.641 checksum=2152320
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=100 trial=1 wall_ms=27.349 cpu_ms=27.223 checksum=2152321
+sample phase=batch index=turboquant-mse-platform bits=4 ef=100 trial=1 wall_ms=12.607 cpu_ms=12.607 checksum=2152321
+sample phase=batch index=turboquant-mse-platform bits=4 ef=100 trial=2 wall_ms=11.857 cpu_ms=11.858 checksum=2152322
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=100 trial=2 wall_ms=26.034 cpu_ms=26.035 checksum=2152322
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=100 trial=3 wall_ms=25.509 cpu_ms=25.509 checksum=2152323
+sample phase=batch index=turboquant-mse-platform bits=4 ef=100 trial=3 wall_ms=12.279 cpu_ms=12.279 checksum=2152323
+sample phase=batch index=turboquant-mse-platform bits=4 ef=100 trial=4 wall_ms=11.880 cpu_ms=11.880 checksum=2152324
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=100 trial=4 wall_ms=25.907 cpu_ms=25.897 checksum=2152324
+search index=turboquant-mse-platform bits=4 ef=100 median_ms_per_query=0.242 p95_ms_per_query=0.361 qps=4139.701 cpu_ms_per_query=0.241 cpu_qps=4144.562 recall_at_10=0.414 checksum=12913930
+search index=turboquant-mse-swift-direct bits=4 ef=100 median_ms_per_query=0.518 p95_ms_per_query=0.651 qps=1929.955 cpu_ms_per_query=0.518 cpu_qps=1930.726 recall_at_10=0.414 checksum=12913930
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=200 trial=0 wall_ms=42.297 cpu_ms=42.297 checksum=2185010
+sample phase=batch index=turboquant-mse-platform bits=4 ef=200 trial=0 wall_ms=20.562 cpu_ms=20.551 checksum=2185010
+sample phase=batch index=turboquant-mse-platform bits=4 ef=200 trial=1 wall_ms=19.928 cpu_ms=19.928 checksum=2185011
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=200 trial=1 wall_ms=42.832 cpu_ms=42.832 checksum=2185011
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=200 trial=2 wall_ms=42.151 cpu_ms=42.143 checksum=2185012
+sample phase=batch index=turboquant-mse-platform bits=4 ef=200 trial=2 wall_ms=20.443 cpu_ms=20.443 checksum=2185012
+sample phase=batch index=turboquant-mse-platform bits=4 ef=200 trial=3 wall_ms=19.891 cpu_ms=19.890 checksum=2185013
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=200 trial=3 wall_ms=42.599 cpu_ms=42.599 checksum=2185013
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=200 trial=4 wall_ms=42.061 cpu_ms=42.052 checksum=2185014
+sample phase=batch index=turboquant-mse-platform bits=4 ef=200 trial=4 wall_ms=20.393 cpu_ms=20.393 checksum=2185014
+search index=turboquant-mse-platform bits=4 ef=200 median_ms_per_query=0.408 p95_ms_per_query=0.453 qps=2451.782 cpu_ms_per_query=0.408 cpu_qps=2451.822 recall_at_10=0.594 checksum=13110070
+search index=turboquant-mse-swift-direct bits=4 ef=200 median_ms_per_query=0.846 p95_ms_per_query=0.909 qps=1182.104 cpu_ms_per_query=0.846 cpu_qps=1182.117 recall_at_10=0.594 checksum=13110070
+sample phase=batch index=turboquant-mse-platform bits=4 ef=400 trial=0 wall_ms=32.922 cpu_ms=32.921 checksum=2258068
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=400 trial=0 wall_ms=66.843 cpu_ms=66.812 checksum=2258068
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=400 trial=1 wall_ms=66.254 cpu_ms=66.254 checksum=2258069
+sample phase=batch index=turboquant-mse-platform bits=4 ef=400 trial=1 wall_ms=33.045 cpu_ms=33.039 checksum=2258069
+sample phase=batch index=turboquant-mse-platform bits=4 ef=400 trial=2 wall_ms=32.276 cpu_ms=32.276 checksum=2258070
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=400 trial=2 wall_ms=67.439 cpu_ms=67.429 checksum=2258070
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=400 trial=3 wall_ms=66.554 cpu_ms=66.554 checksum=2258071
+sample phase=batch index=turboquant-mse-platform bits=4 ef=400 trial=3 wall_ms=33.151 cpu_ms=33.143 checksum=2258071
+sample phase=batch index=turboquant-mse-platform bits=4 ef=400 trial=4 wall_ms=32.308 cpu_ms=32.308 checksum=2258072
+sample phase=batch index=turboquant-mse-swift-direct bits=4 ef=400 trial=4 wall_ms=67.333 cpu_ms=67.334 checksum=2258072
+search index=turboquant-mse-platform bits=4 ef=400 median_ms_per_query=0.658 p95_ms_per_query=0.745 qps=1518.762 cpu_ms_per_query=0.658 cpu_qps=1518.787 recall_at_10=0.766 checksum=13548418
+search index=turboquant-mse-swift-direct bits=4 ef=400 median_ms_per_query=1.337 p95_ms_per_query=1.400 qps=748.016 cpu_ms_per_query=1.336 cpu_qps=748.369 recall_at_10=0.766 checksum=13548418
