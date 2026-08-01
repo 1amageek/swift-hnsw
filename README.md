@@ -535,6 +535,11 @@ TurboQuant distances are ADC approximations of cosine distance. Recall and laten
 bit width, `efSearch`, dimension, and dataset distribution; benchmark results must therefore
 be reported with the exact dataset and toolchain rather than copied between configurations.
 
+The four-bit MSE inner-product path uses `CTurboQuantKernels`: ARM64 selects
+the NEON implementation, while Native non-ARM, regular WASM, and Embedded WASM
+use the portable C kernel. The C target is part of the production SwiftPM graph;
+the QJL reduction remains a pure Swift unsafe implementation.
+
 `bytesPerVector` is a packed-record metric, not total index memory. HNSW topology, workspaces,
 the QJL projection, and allocator metadata are additional storage. See the
 [measured benchmark report](reports/turboquant_benchmark.md) and the

@@ -70,7 +70,7 @@ public final class TurboQuantIndex: Sendable {
     private let msePackedSize: Int
     private let qjlPackedSize: Int
     private let _packedSize: Int
-    private let usesAcceleratedFourBitKernel: Bool
+    private let usesFourBitKernel: Bool
     private let qjlPruningMode: TurboQuantQJLPruningMode
     private let qjlScale: Float
     private let maximumResidualNorm: Float
@@ -99,8 +99,8 @@ public final class TurboQuantIndex: Sendable {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
-            acceleratedFourBitKernelAvailable:
-                ScalarQuantizer.hasAcceleratedFourBitKernel,
+            fourBitKernelAvailable:
+                ScalarQuantizer.hasFourBitInnerProductKernel,
             qjlPruningMode: .automatic,
             createsBuilder: true
         )
@@ -127,8 +127,8 @@ public final class TurboQuantIndex: Sendable {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
-            acceleratedFourBitKernelAvailable:
-                ScalarQuantizer.hasAcceleratedFourBitKernel,
+            fourBitKernelAvailable:
+                ScalarQuantizer.hasFourBitInnerProductKernel,
             qjlPruningMode: qjlPruningMode,
             collectQJLPruningStatistics: collectQJLPruningStatistics,
             createsBuilder: true
@@ -143,7 +143,7 @@ public final class TurboQuantIndex: Sendable {
         rotationStrategy: TurboQuantRotationStrategy,
         configuration: HNSWConfiguration,
         seed: UInt64,
-        acceleratedFourBitKernelAvailable: Bool,
+        fourBitKernelAvailable: Bool,
         qjlPruningMode: TurboQuantQJLPruningMode = .automatic,
         collectQJLPruningStatistics: Bool = false
     ) throws {
@@ -155,8 +155,7 @@ public final class TurboQuantIndex: Sendable {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
-            acceleratedFourBitKernelAvailable:
-                acceleratedFourBitKernelAvailable,
+            fourBitKernelAvailable: fourBitKernelAvailable,
             qjlPruningMode: qjlPruningMode,
             collectQJLPruningStatistics: collectQJLPruningStatistics,
             createsBuilder: true
@@ -171,7 +170,7 @@ public final class TurboQuantIndex: Sendable {
         rotationStrategy: TurboQuantRotationStrategy,
         configuration: HNSWConfiguration,
         seed: UInt64,
-        acceleratedFourBitKernelAvailable: Bool,
+        fourBitKernelAvailable: Bool,
         qjlPruningMode: TurboQuantQJLPruningMode,
         collectQJLPruningStatistics: Bool = false,
         createsBuilder: Bool
@@ -273,13 +272,13 @@ public final class TurboQuantIndex: Sendable {
             throw HNSWError.initializationFailed("TurboQuant record size overflows Int")
         }
         let packedSize = msePackedSize + qjlPackedSize + residualNormSize
-        let usesAcceleratedFourBitKernel = mseBitWidth == 4
-            && acceleratedFourBitKernelAvailable
+        let usesFourBitKernel = mseBitWidth == 4
+            && fourBitKernelAvailable
         let supportsPackedLookup = mseBitWidth == 1
             || mseBitWidth == 2
             || (
                 mseBitWidth == 4
-                    && !usesAcceleratedFourBitKernel
+                    && !usesFourBitKernel
                     && padded >= 256
             )
         guard UInt64(packedSize) <= UInt64(UInt32.max) else {
@@ -292,7 +291,7 @@ public final class TurboQuantIndex: Sendable {
                 || qjlPackedSize <= Int.max / QJLProjection.lookupEntriesPerByte else {
             throw HNSWError.initializationFailed("QJL distance table size overflows Int")
         }
-        let distanceTableCount = mseBitWidth == 0 || usesAcceleratedFourBitKernel
+        let distanceTableCount = mseBitWidth == 0 || usesFourBitKernel
             ? 0
             : padded * (1 << mseBitWidth)
         let qjlTableCount = qjlProjection?.lookupTableCount ?? 0
@@ -348,7 +347,7 @@ public final class TurboQuantIndex: Sendable {
         self.msePackedSize = msePackedSize
         self.qjlPackedSize = qjlPackedSize
         self._packedSize = packedSize
-        self.usesAcceleratedFourBitKernel = usesAcceleratedFourBitKernel
+        self.usesFourBitKernel = usesFourBitKernel
         self.qjlPruningMode = qjlPruningMode
         self.qjlScale = objective == .innerProduct
             ? Float(1.253_314_137_315_500_3) / Float(dimensions)
@@ -643,7 +642,7 @@ public final class TurboQuantIndex: Sendable {
                             )
                         }
                         return state.queryDistanceTable.withUnsafeMutableBufferPointer { distanceTable in
-                            if mseBitWidth > 0, !usesAcceleratedFourBitKernel {
+                            if mseBitWidth > 0, !usesFourBitKernel {
                                 quantizer.fillInnerProductTable(
                                     for: UnsafeBufferPointer(start: rotatedQuery.baseAddress, count: rotatedQuery.count),
                                     into: distanceTable
@@ -1110,7 +1109,7 @@ public final class TurboQuantIndex: Sendable {
         let mseInnerProduct: Float
         if mseBitWidth == 0 {
             mseInnerProduct = 0
-        } else if usesAcceleratedFourBitKernel {
+        } else if usesFourBitKernel {
             mseInnerProduct = quantizer.fourBitInnerProduct(
                 from: mseCode,
                 query: mseQuery
@@ -1431,8 +1430,8 @@ extension TurboQuantIndex {
             rotationStrategy: rotationStrategy,
             configuration: configuration,
             seed: seed,
-            acceleratedFourBitKernelAvailable:
-                ScalarQuantizer.hasAcceleratedFourBitKernel,
+            fourBitKernelAvailable:
+                ScalarQuantizer.hasFourBitInnerProductKernel,
             qjlPruningMode: .automatic,
             createsBuilder: false
         )

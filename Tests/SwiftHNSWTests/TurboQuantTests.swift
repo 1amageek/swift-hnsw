@@ -60,6 +60,11 @@ struct BitPackingTests {
 @Suite("ScalarQuantizer Tests")
 struct ScalarQuantizerTests {
 
+    @Test("Four-bit C kernel is linked")
+    func fourBitKernelIsLinked() {
+        #expect(ScalarQuantizer.hasFourBitInnerProductKernel)
+    }
+
     @Test("Codebook symmetry", arguments: [0, 1, 2, 3, 4])
     func codebookSymmetry(b: Int) {
         let sq = ScalarQuantizer(bitWidth: b, dimension: 128)
@@ -247,7 +252,7 @@ struct ScalarQuantizerTests {
                 efSearch: 31
             ),
             seed: 42,
-            acceleratedFourBitKernelAvailable: false
+            fourBitKernelAvailable: false
         )
         for vectorIndex in 0..<vectorCount {
             let vector = (0..<dimension).map { coordinate in

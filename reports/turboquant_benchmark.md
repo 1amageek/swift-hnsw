@@ -215,15 +215,20 @@ high and low nibbles in coordinate order, reconstructs four-byte centroids with
 NEON table lookups and zip operations, then accumulates with four independent
 FMA chains. Odd and non-multiple-of-sixteen dimensions use a scalar tail.
 
-The non-NEON path remains functional and uses the coordinate/packed lookup
-implementation. Capability selection is explicit; an unsupported platform
-does not silently execute the ARM64 kernel. Product 5-bit still performs its
-QJL projection and residual estimate. The production initializer uses an
-automatic pruning policy: the conservative QJL bound is enabled at the
+The non-NEON path remains functional through the portable C four-bit kernel,
+which is compiled and linked for Native, regular WASM, and Embedded WASM. The
+ARM64 NEON path is selected only when its target advertises NEON; other targets
+do not silently execute ARM-specific instructions. Product 5-bit still
+performs its QJL projection and residual estimate. The production initializer
+uses an automatic pruning policy: the conservative QJL bound is enabled at the
 calibrated `efSearch >= 100` boundary. Benchmark
 SPI exposes `automatic`, `always`, and `never` policies so the threshold can be
 measured without changing the application API. Counters are also SPI-only and
 remain outside the production surface.
+
+The C-target compile/link matrix and the portable-kernel selection contract are
+recorded in
+[`benchmark-artifacts/2026-08-01-cturboquant-portability`](benchmark-artifacts/2026-08-01-cturboquant-portability/README.md).
 
 ## Adaptive QJL pruning verification (`d8b1bc1`)
 
@@ -271,7 +276,7 @@ policy summaries are stored in
 
 | Verification | Result |
 | --- | --- |
-| Native package tests | 115 tests in 13 suites passed, 0 failed; benchmark cases skipped |
+| Native package tests | 116 tests in 13 suites passed, 0 failed; benchmark cases skipped |
 | Address Sanitizer | TurboQuant Product suite passed (8 tests) |
 | Thread Sanitizer | Concurrent TurboQuant search passed; no race reported |
 | Undefined Behavior Sanitizer | 10 quantizer/kernel/fallback tests passed after explicitly linking the snapshot runtime |
@@ -281,9 +286,10 @@ policy summaries are stored in
 
 The current snapshot cannot compile the package's existing `Float16` APIs for
 an x86_64 macOS destination, so a Rosetta package-level run was unavailable.
-The non-NEON production branch was instead forced through the internal
-capability input; coordinate-table and packed-table searches over the same
-finalized index produced the same labels and distances.
+The portable C branch is compiled and linked for regular WASM and Embedded WASM;
+the Native ARM64 build selects the NEON branch. Coordinate-table and packed-table
+searches remain covered by the explicit `fourBitKernelAvailable: false` test
+configuration and produced the same labels and distances.
 
 ### Shared-state review matrix
 

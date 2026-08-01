@@ -8,8 +8,8 @@
 extern "C" {
 #endif
 
-// Returns one when this build contains the ARM64 NEON four-bit kernel.
-int swift_hnsw_turboquant_has_accelerated_four_bit_inner_product(void);
+// Returns one when the portable four-bit kernel is linked for this target.
+int swift_hnsw_turboquant_has_four_bit_inner_product_kernel(void);
 
 // Computes a four-bit centroid dot product without retaining or modifying input memory.
 //

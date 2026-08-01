@@ -7,8 +7,8 @@ import CTurboQuantKernels
 /// proportional to `(1 - x^2)^((d - 3) / 2)` on `[-1, 1]`.
 struct ScalarQuantizer: Sendable {
 
-    static let hasAcceleratedFourBitKernel =
-        swift_hnsw_turboquant_has_accelerated_four_bit_inner_product() != 0
+    static let hasFourBitInnerProductKernel =
+        swift_hnsw_turboquant_has_four_bit_inner_product_kernel() != 0
 
     /// Quantization bit-width (0, 1, 2, 3, or 4)
     let bitWidth: Int

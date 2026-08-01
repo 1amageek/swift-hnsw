@@ -5,6 +5,9 @@
 - Reduced QJL lookup-loop load overhead with a bounded pure Swift unaligned
   `UInt64` read and a `UInt32` fallback while preserving Float32 reduction
   order and result compatibility.
+- Activated the portable `CTurboQuantKernels` four-bit MSE path for Native
+  non-ARM, regular WASM, and Embedded WASM while retaining ARM64 NEON
+  specialization.
 - Added paired d=768 and d=128 benchmark evidence for the follow-up.
 - Kept the archive representation unchanged; TurboQuant 1.1.0 archives remain
   loadable by 1.1.1.
