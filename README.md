@@ -1,7 +1,7 @@
 # SwiftHNSW
 
 A Swift vector search library for Hierarchical Navigable Small World style nearest-neighbor APIs.
-The production index supports WebAssembly builds. A separate reference benchmark package uses [hnswlib](https://github.com/nmslib/hnswlib) only for performance comparison.
+The production target cross-compiles for WebAssembly. A separate reference benchmark package uses [hnswlib](https://github.com/nmslib/hnswlib) only for performance comparison.
 
 ## Features
 
@@ -19,9 +19,9 @@ The production index supports WebAssembly builds. A separate reference benchmark
 
 ## Requirements
 
-- Swift 6.2+
-- macOS 13+ / iOS 16+
-- Swift WebAssembly SDK for WASM builds
+- Swift 6.2+ for Apple-platform builds
+- macOS 26+ / iOS 26+
+- Swift 6.4 development snapshot and matching Swift WebAssembly SDK for WASM builds
 - C++17 toolchain only for the separate reference benchmark package
 
 ## Installation
@@ -32,7 +32,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/1amageek/swift-hnsw.git", from: "1.1.3")
+    .package(url: "https://github.com/1amageek/swift-hnsw.git", from: "1.1.4")
 ]
 ```
 
@@ -121,6 +121,26 @@ let results = try index.search(query, k: 10)
 ```
 
 Search requires a positive `k`; invalid values throw `HNSWError.invalidArgument`.
+All HNSW inputs must contain finite values. Cosine vectors additionally require
+a finite, nonzero norm. Validation happens before index mutation, including for
+contiguous batch inputs.
+
+Constrained hosts can inspect a borrowed graph archive before restoration:
+
+```swift
+let profile = try HNSWIndexF32.inspectArchiveResourceProfile(
+    from: archive,
+    dimensions: dimensions,
+    metric: .cosine
+)
+guard profile.estimatedRestoreWorkingPayloadByteCount <= restoreBudget else {
+    throw HostError.resourceLimitExceeded
+}
+```
+
+The profile estimates SwiftHNSW's known payload allocations and includes
+conservative collection allowances. Hosts must retain headroom for allocator
+capacity rounding, allocator metadata, and unrelated process memory.
 
 ### Type Aliases
 
@@ -545,8 +565,9 @@ unsafe implementation.
 The WASM evidence currently covers the production four-bit kernel boundary,
 including runtime differential checks and benchmarks. It does not establish a
 complete `HNSWIndex<Float>` / `TurboQuantIndex` lifecycle: the fixed Swift 6.4
-snapshot traps in generic HNSW construction metadata before four-bit scoring is
-reached. Full end-to-end WASM index support is therefore not claimed here.
+snapshot traps in `Array.withUnsafeBufferPointer` during the first HNSW add,
+before four-bit scoring is reached. Full end-to-end WASM index support is not
+claimed here.
 
 `bytesPerVector` is a packed-record metric, not total index memory. HNSW topology, workspaces,
 the QJL projection, and allocator metadata are additional storage. See the

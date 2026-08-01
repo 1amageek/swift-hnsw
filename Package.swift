@@ -30,5 +30,6 @@ let package = Package(
             name: "SwiftHNSWTests",
             dependencies: ["SwiftHNSW"]
         ),
-    ]
+    ],
+    cLanguageStandard: .c11
 )

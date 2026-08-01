@@ -27,25 +27,12 @@ enum VectorOperations {
         precondition(input.count == output.count, "Input and output dimensions must match")
         guard input.count > 0 else { return }
 
-#if canImport(Accelerate)
-        var magnitude: Float = 0
-        vDSP_dotpr(input.baseAddress!, 1, input.baseAddress!, 1, &magnitude, vDSP_Length(input.count))
-        magnitude = sqrt(magnitude)
-        guard magnitude > 0 else {
-            copy(input, into: output)
-            return
-        }
-        var scale = 1.0 / magnitude
-        vDSP_vsmul(input.baseAddress!, 1, &scale, output.baseAddress!, 1, vDSP_Length(input.count))
-#else
-        var magnitude = dotProduct(input, input)
-        magnitude = magnitude.squareRoot()
+        let magnitude = squaredMagnitude(input).squareRoot()
         guard magnitude > 0 else {
             copy(input, into: output)
             return
         }
         scale(input, by: 1.0 / magnitude, into: output)
-#endif
     }
 
     /// Normalize a batch of vectors to unit length
@@ -143,13 +130,91 @@ enum VectorOperations {
         precondition(input.count == output.count, "Input and output dimensions must match")
         guard input.count > 0 else { return }
 
-        var magnitude = dotProduct(input, input)
-        magnitude = magnitude.squareRoot()
+        let magnitude = squaredMagnitude(input).squareRoot()
         guard magnitude > 0 else {
             copy(input, into: output)
             return
         }
         scale(input, by: 1.0 / magnitude, into: output)
+    }
+
+    @inline(__always)
+    static func squaredMagnitude(
+        _ input: UnsafeBufferPointer<Float>
+    ) -> Float {
+#if canImport(Accelerate)
+        var result: Float = 0
+        vDSP_dotpr(
+            input.baseAddress!,
+            1,
+            input.baseAddress!,
+            1,
+            &result,
+            vDSP_Length(input.count)
+        )
+        return result
+#else
+        return dotProduct(input, input)
+#endif
+    }
+
+    @inline(__always)
+    static func squaredMagnitude(
+        _ input: UnsafeBufferPointer<Float16>
+    ) -> Float {
+        dotProduct(input, input)
+    }
+
+    @inline(__always)
+    static func containsOnlyFiniteValues(
+        _ input: UnsafeBufferPointer<Float>
+    ) -> Bool {
+        let exponentMask = SIMD8<UInt32>(repeating: 0x7f80_0000)
+        var index = 0
+        let simdEnd = input.count - (input.count % SIMD8<UInt32>.scalarCount)
+        // The caller retains initialized Float storage for this synchronous borrow.
+        // `simdEnd` keeps every unaligned read in bounds, and the equal-size bit cast
+        // inspects bytes without rebinding or mutating storage; no pointer escapes.
+        while index < simdEnd {
+            let values = loadFloatSIMD(input, at: index)
+            let bitPatterns = unsafeBitCast(values, to: SIMD8<UInt32>.self)
+            if ((bitPatterns & exponentMask) .== exponentMask)
+                != .init(repeating: false) {
+                return false
+            }
+            index += SIMD8<UInt32>.scalarCount
+        }
+        while index < input.count {
+            guard input[index].isFinite else { return false }
+            index += 1
+        }
+        return true
+    }
+
+    @inline(__always)
+    static func containsOnlyFiniteValues(
+        _ input: UnsafeBufferPointer<Float16>
+    ) -> Bool {
+        let exponentMask = SIMD8<UInt16>(repeating: 0x7c00)
+        var index = 0
+        let simdEnd = input.count - (input.count % SIMD8<UInt16>.scalarCount)
+        // The caller retains initialized Float16 storage for this synchronous borrow.
+        // `simdEnd` keeps every unaligned read in bounds, and the equal-size bit cast
+        // inspects bytes without rebinding or mutating storage; no pointer escapes.
+        while index < simdEnd {
+            let values = loadFloat16SIMD(input, at: index)
+            let bitPatterns = unsafeBitCast(values, to: SIMD8<UInt16>.self)
+            if ((bitPatterns & exponentMask) .== exponentMask)
+                != .init(repeating: false) {
+                return false
+            }
+            index += SIMD8<UInt16>.scalarCount
+        }
+        while index < input.count {
+            guard input[index].isFinite else { return false }
+            index += 1
+        }
+        return true
     }
 
     static func distance(
@@ -425,13 +490,24 @@ enum VectorOperations {
     }
 
     @inline(__always)
-    private static func scale(
+    static func scale(
         _ input: UnsafeBufferPointer<Float>,
         by scale: Float,
         into output: UnsafeMutableBufferPointer<Float>
     ) {
         precondition(input.count == output.count, "Input and output dimensions must match")
 
+#if canImport(Accelerate)
+        var scale = scale
+        vDSP_vsmul(
+            input.baseAddress!,
+            1,
+            &scale,
+            output.baseAddress!,
+            1,
+            vDSP_Length(input.count)
+        )
+#else
         var index = 0
         let scaleVector = FloatSIMD(repeating: scale)
         let simdEnd = input.count - (input.count % FloatSIMD.scalarCount)
@@ -447,10 +523,11 @@ enum VectorOperations {
             output[index] = input[index] * scale
             index += 1
         }
+#endif
     }
 
     @inline(__always)
-    private static func scale(
+    static func scale(
         _ input: UnsafeBufferPointer<Float16>,
         by scale: Float,
         into output: UnsafeMutableBufferPointer<Float16>

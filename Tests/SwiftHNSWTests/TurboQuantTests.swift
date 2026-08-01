@@ -943,8 +943,8 @@ struct TurboQuantIndexTests {
         let k = 10
         let numQueries = 50
 
-        let trainVectors = (0..<n).map { _ in (0..<dim).map { _ in Float.random(in: -1...1) } }
-        let testQueries = (0..<numQueries).map { _ in (0..<dim).map { _ in Float.random(in: -1...1) } }
+        let trainVectors = seededVectors(count: n, dimension: dim, seed: 0x1280_0001)
+        let testQueries = seededVectors(count: numQueries, dimension: dim, seed: 0x1280_0002)
 
         // Cosine ground truth
         let groundTruths = computeCosineGroundTruth(queries: testQueries, vectors: trainVectors, k: k)
@@ -973,8 +973,8 @@ struct TurboQuantIndexTests {
         let k = 10
         let numQueries = 50
 
-        let trainVectors = (0..<n).map { _ in (0..<dim).map { _ in Float.random(in: -1...1) } }
-        let testQueries = (0..<numQueries).map { _ in (0..<dim).map { _ in Float.random(in: -1...1) } }
+        let trainVectors = seededVectors(count: n, dimension: dim, seed: 0x7680_0001)
+        let testQueries = seededVectors(count: numQueries, dimension: dim, seed: 0x7680_0002)
 
         let groundTruths = computeCosineGroundTruth(queries: testQueries, vectors: trainVectors, k: k)
 

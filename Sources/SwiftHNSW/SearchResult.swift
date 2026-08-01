@@ -13,7 +13,10 @@ public struct SearchResult: Sendable, Hashable {
 
 extension SearchResult: Comparable {
     public static func < (lhs: SearchResult, rhs: SearchResult) -> Bool {
-        lhs.distance < rhs.distance
+        if lhs.distance == rhs.distance {
+            return lhs.label < rhs.label
+        }
+        return lhs.distance < rhs.distance
     }
 }
 

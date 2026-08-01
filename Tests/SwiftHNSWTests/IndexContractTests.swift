@@ -40,6 +40,7 @@ struct HNSWIndexContractTests {
 
         #expect(results.map(\.label) == [5, 10, 20, 30])
         #expect(results.map(\.distance) == [0, 0, 1, 1])
+        #expect(results.reversed().sorted().map(\.label) == [5, 10, 20, 30])
     }
 
     @Test("Deletion, restore, replacement, and capacity semantics")
@@ -321,6 +322,112 @@ struct HNSWIndexContractTests {
         }
     }
 
+    @Test("Invalid numeric vectors fail before mutating the index")
+    func invalidNumericVectorsFailBeforeMutation() throws {
+        let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 4, metric: .l2)
+
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "vector must contain only finite values"
+            )
+        ) {
+            try index.add([1, .nan], label: 1)
+        }
+        #expect(index.count == 0)
+
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "vector must contain only finite values"
+            )
+        ) {
+            _ = try index.addBatch(
+                [1, 0, .infinity, 0],
+                labels: [1, 2]
+            )
+        }
+        #expect(index.count == 0)
+
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "vector must contain only finite values"
+            )
+        ) {
+            _ = try index.addBatch(
+                [[1, 0], [.nan, 0]],
+                startingLabel: 1
+            )
+        }
+        #expect(index.count == 0)
+
+        try index.add([1, 0], label: 1)
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "query must contain only finite values"
+            )
+        ) {
+            _ = try index.search([1, -.infinity], k: 1)
+        }
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "query must contain only finite values"
+            )
+        ) {
+            _ = try index.searchBatch(
+                [1, 0, .nan, 0],
+                numQueries: 2,
+                k: 1
+            )
+        }
+
+        var output = [SearchResult](
+            repeating: SearchResult(label: 0, distance: 0),
+            count: 1
+        )
+        #expect(
+            throws: HNSWError.invalidArgument(
+                "query must contain only finite values"
+            )
+        ) {
+            try output.withUnsafeMutableBufferPointer { outputBuffer in
+                _ = try index.search(
+                    [.nan, 0],
+                    k: 1,
+                    into: outputBuffer
+                )
+            }
+        }
+    }
+
+    @Test("Cosine vectors require finite nonzero norms")
+    func cosineVectorsRequireFiniteNonzeroNorms() throws {
+        let index = try HNSWIndex<Float>(
+            dimensions: 2,
+            maxElements: 2,
+            metric: .cosine
+        )
+
+        #expect(
+            throws: HNSWError.invalidArgument("vector must have nonzero norm")
+        ) {
+            try index.add([0, 0], label: 1)
+        }
+        #expect(
+            throws: HNSWError.invalidArgument("vector norm must be finite")
+        ) {
+            try index.add(
+                [.greatestFiniteMagnitude, .greatestFiniteMagnitude],
+                label: 1
+            )
+        }
+
+        try index.add([1, 0], label: 1)
+        #expect(
+            throws: HNSWError.invalidArgument("query must have nonzero norm")
+        ) {
+            _ = try index.search([0, 0], k: 1)
+        }
+    }
+
     @Test("Resize preserves the archive capacity contract")
     func resizePreservesArchiveCapacityContract() throws {
         let index = try HNSWIndex<Float>(dimensions: 2, maxElements: 2)
@@ -485,6 +592,76 @@ struct HNSWIndexContractTests {
         #expect(throws: HNSWError.self) {
             _ = try HNSWIndex<Float>.restore(
                 from: payload,
+                dimensions: 1,
+                metric: .l2
+            )
+        }
+    }
+
+    @Test("Graph loader rejects invalid vector values")
+    func graphLoaderRejectsInvalidVectorValues() throws {
+        #expect(
+            throws: HNSWError.loadFailed(
+                "Graph index contains non-finite vector values"
+            )
+        ) {
+            _ = try HNSWIndex<Float>.restore(
+                from: invalidGraphPayloadWithVector(.nan, metric: .l2),
+                dimensions: 1,
+                metric: .l2
+            )
+        }
+
+        #expect(
+            throws: HNSWError.loadFailed(
+                "Graph index contains values outside the Float16 range"
+            )
+        ) {
+            _ = try HNSWIndex<Float16>.restore(
+                from: invalidGraphPayloadWithVector(
+                    .greatestFiniteMagnitude,
+                    metric: .l2
+                ),
+                dimensions: 1,
+                metric: .l2
+            )
+        }
+
+        #expect(
+            throws: HNSWError.loadFailed(
+                "Graph index contains an invalid cosine vector norm"
+            )
+        ) {
+            _ = try HNSWIndex<Float>.restore(
+                from: invalidGraphPayloadWithVector(0, metric: .cosine),
+                dimensions: 1,
+                metric: .cosine
+            )
+        }
+    }
+
+    @Test("Legacy flat loader rejects invalid vectors and duplicate labels")
+    func flatLoaderRejectsInvalidVectorsAndDuplicateLabels() throws {
+        #expect(
+            throws: HNSWError.loadFailed(
+                "Flat index contains non-finite vector values"
+            )
+        ) {
+            _ = try HNSWIndex<Float>.restore(
+                from: invalidFlatPayload(vectorValues: [.nan]),
+                dimensions: 1,
+                metric: .l2
+            )
+        }
+
+        #expect(
+            throws: HNSWError.loadFailed("Flat index contains duplicate labels")
+        ) {
+            _ = try HNSWIndex<Float>.restore(
+                from: invalidFlatPayload(
+                    vectorValues: [0, 1],
+                    labels: [1, 1]
+                ),
                 dimensions: 1,
                 metric: .l2
             )
@@ -1004,6 +1181,56 @@ private func removeFileIfPresent(_ path: String) {
     } catch {
         return
     }
+}
+
+private func invalidGraphPayloadWithVector(
+    _ value: Float,
+    metric: DistanceMetric
+) -> Data {
+    var writer = InvalidGraphPayloadWriter()
+    writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x47, 0x52, 0x46])
+    writer.writeUInt32(2)
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeString(metric.rawValue)
+    writer.writeUInt32(16)
+    writer.writeUInt32(200)
+    writer.writeUInt32(50)
+    writer.writeUInt32(100)
+    writer.writeBool(false)
+    writer.writeUInt32(0)
+    writer.writeUInt32(0)
+    writer.writeUInt64(1)
+    writer.writeUInt32(1)
+    writer.writeUInt64(1)
+    writer.writeBool(false)
+    writer.writeUInt32(0)
+    writer.writeFloat(value)
+    writer.writeUInt32(1)
+    writer.writeUInt32(0)
+    return writer.data
+}
+
+private func invalidFlatPayload(
+    vectorValues: [Float],
+    labels: [UInt64]? = nil
+) -> Data {
+    let archiveLabels = labels ?? Array(1...UInt64(vectorValues.count))
+    precondition(archiveLabels.count == vectorValues.count)
+
+    var writer = InvalidGraphPayloadWriter()
+    writer.writeBytes([0x53, 0x48, 0x4E, 0x53, 0x57, 0x46, 0x4C, 0x41])
+    writer.writeUInt32(1)
+    writer.writeUInt32(1)
+    writer.writeUInt32(UInt32(vectorValues.count))
+    writer.writeString("l2")
+    writer.writeUInt32(UInt32(vectorValues.count))
+    for (label, value) in zip(archiveLabels, vectorValues) {
+        writer.writeUInt64(label)
+        writer.writeBool(false)
+        writer.writeFloat(value)
+    }
+    return writer.data
 }
 
 private func invalidGraphPayloadWithSelfEdge() -> Data {

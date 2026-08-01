@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.1.4 — 2026-08-02
+
+- Reject non-finite HNSW vectors and invalid cosine norms before mutation or
+  search, and reject the same values when restoring archives.
+- Reject duplicate labels in legacy flat archives instead of constructing an
+  inconsistent graph.
+- Make `SearchResult` ordering deterministic for equal distances by comparing
+  labels.
+- Add a continuous-integration gate for optimized macOS and iOS builds, the
+  full macOS test suite, and Address/Thread Sanitizer runs.
+- Correct the documented minimum deployment targets to macOS 26 and iOS 26.
+- Add borrowed graph-archive resource inspection with conservative retained and
+  restore-working payload estimates so constrained hosts can reject restoration
+  before allocation while retaining allocator headroom.
+
 ## 1.1.3 — 2026-08-01
 
 - Added an allocation-free direct Swift four-bit reference with differential

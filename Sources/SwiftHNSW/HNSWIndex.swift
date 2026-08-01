@@ -192,9 +192,15 @@ extension HNSWIndex {
     /// the required ownership copy exactly once and avoids temporary slice arrays.
     public func add(_ vector: UnsafeBufferPointer<Scalar>, label: UInt64) throws {
         try validateDimensions(vector.count)
+        let normalizationScale = try validateInputVector(vector, name: "vector")
 
         try state.withLock {
-            try upsertVector(vector, label: label, state: &$0)
+            try upsertVector(
+                vector,
+                label: label,
+                normalizationScale: normalizationScale,
+                state: &$0
+            )
         }
     }
 
@@ -212,6 +218,7 @@ extension HNSWIndex {
         guard k > 0 else {
             throw HNSWError.invalidArgument("k must be positive")
         }
+        let normalizationScale = try validateInputVector(query, name: "query")
 
         return try state.withLock { state in
             try validateSearchWorkspace(k: k, state: state)
@@ -234,7 +241,11 @@ extension HNSWIndex {
 
                 ensureCapacity(&state.halfPrecisionQueryWorkspace, count: dimensions)
                 state.halfPrecisionQueryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
-                    storeNormalizedHalfVector(query, into: preparedQuery)
+                    storeNormalizedHalfVector(
+                        query,
+                        normalizationScale: normalizationScale,
+                        into: preparedQuery
+                    )
                 }
                 return state.halfPrecisionQueryWorkspace.withUnsafeBufferPointer { preparedQuery in
                     searchNormalizedHalf(preparedQuery, k: k, state: &state)
@@ -244,7 +255,11 @@ extension HNSWIndex {
             ensureCapacity(&state.queryWorkspace, count: dimensions)
             state.queryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
                 if metric.requiresNormalization {
-                    storeNormalizedVector(query, into: preparedQuery)
+                    storeNormalizedVector(
+                        query,
+                        normalizationScale: normalizationScale,
+                        into: preparedQuery
+                    )
                 } else {
                     storeVector(query, into: preparedQuery)
                 }
@@ -272,6 +287,7 @@ extension HNSWIndex {
         guard results.count >= k else {
             throw HNSWError.invalidArgument("Result buffer must contain at least k elements")
         }
+        let normalizationScale = try validateInputVector(query, name: "query")
 
         return try state.withLock { state in
             try validateSearchWorkspace(k: k, state: state)
@@ -293,7 +309,11 @@ extension HNSWIndex {
 
                 ensureCapacity(&state.halfPrecisionQueryWorkspace, count: dimensions)
                 state.halfPrecisionQueryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
-                    storeNormalizedHalfVector(query, into: preparedQuery)
+                    storeNormalizedHalfVector(
+                        query,
+                        normalizationScale: normalizationScale,
+                        into: preparedQuery
+                    )
                 }
                 return state.halfPrecisionQueryWorkspace.withUnsafeBufferPointer { preparedQuery in
                     searchNormalizedHalf(preparedQuery, k: k, into: results, state: &state)
@@ -303,7 +323,11 @@ extension HNSWIndex {
             ensureCapacity(&state.queryWorkspace, count: dimensions)
             state.queryWorkspace.withUnsafeMutableBufferPointer { preparedQuery in
                 if metric.requiresNormalization {
-                    storeNormalizedVector(query, into: preparedQuery)
+                    storeNormalizedVector(
+                        query,
+                        normalizationScale: normalizationScale,
+                        into: preparedQuery
+                    )
                 } else {
                     storeVector(query, into: preparedQuery)
                 }
@@ -384,6 +408,15 @@ extension HNSWIndex {
         try validateDimensions(vectors.count, expectedTotal: expectedVectorCount)
         guard numVectors > 0 else { return 0 }
 
+        for index in 0..<numVectors {
+            let offset = index * dimensions
+            let vector = UnsafeBufferPointer(
+                start: vectors.baseAddress! + offset,
+                count: dimensions
+            )
+            _ = try validateInputVector(vector, name: "vector")
+        }
+
         return try state.withLock { state in
             var addedCount = 0
             for index in 0..<numVectors {
@@ -401,6 +434,11 @@ extension HNSWIndex {
         guard !vectors.isEmpty else { return 0 }
         guard vectors.allSatisfy({ $0.count == dimensions }) else {
             throw HNSWError.dimensionMismatch(expected: dimensions, got: vectors.first?.count ?? 0)
+        }
+        for vector in vectors {
+            try vector.withUnsafeBufferPointer {
+                _ = try validateInputVector($0, name: "vector")
+            }
         }
 
         let start = startingLabel ?? UInt64(count)
@@ -444,6 +482,15 @@ extension HNSWIndex {
         let expectedQueryCount = numQueries * dimensions
         try validateDimensions(queries.count, expectedTotal: expectedQueryCount)
         guard numQueries > 0 else { return [] }
+
+        for index in 0..<numQueries {
+            let offset = index * dimensions
+            let query = UnsafeBufferPointer(
+                start: queries.baseAddress! + offset,
+                count: dimensions
+            )
+            _ = try validateInputVector(query, name: "query")
+        }
 
         return try state.withLock { state in
             try validateSearchWorkspace(k: k, state: state)
@@ -675,6 +722,325 @@ extension HNSWIndex {
 
 extension HNSWIndex {
 
+    /// Inspects a graph archive and calculates conservative payload estimates
+    /// before restore allocates vector, graph, and workspace storage.
+    ///
+    /// The archive remains borrowed for the duration of this call. The method
+    /// supports the graph archive emitted by `serializedArchive()`; legacy flat
+    /// archives remain accepted by `restore` but are not valid persisted graph
+    /// snapshots for resource admission.
+    public static func inspectArchiveResourceProfile<Archive: HNSWArchiveBytes>(
+        from archive: borrowing Archive,
+        dimensions: Int,
+        metric: DistanceMetric = .l2,
+        maxElements: Int = 0
+    ) throws -> HNSWArchiveResourceProfile {
+        do {
+            return try archive.withUnsafeBytes { bytes in
+                var reader = HNSWArchiveReader(bytes: bytes)
+                guard try reader.readMagic() == HNSWArchiveReader.graphMagic,
+                      try reader.readUInt32() == 2 else {
+                    throw HNSWError.loadFailed(
+                        "Unsupported HNSW graph archive"
+                    )
+                }
+                let storedDimensions = try reader.readIntFromUInt32(
+                    name: "dimensions"
+                )
+                guard storedDimensions == dimensions else {
+                    throw HNSWError.dimensionMismatch(
+                        expected: dimensions,
+                        got: storedDimensions
+                    )
+                }
+                let storedCapacity = try reader.readIntFromUInt32(
+                    name: "capacity"
+                )
+                let storedMetric = try reader.readString()
+                guard storedMetric == metric.rawValue else {
+                    throw HNSWError.loadFailed(
+                        "Stored metric \(storedMetric) does not match \(metric.rawValue)"
+                    )
+                }
+                let storedM = try reader.readIntFromUInt32(name: "m")
+                let storedEfConstruction = try reader.readIntFromUInt32(
+                    name: "efConstruction"
+                )
+                let storedEfSearch = try reader.readIntFromUInt32(
+                    name: "efSearch"
+                )
+                guard (2...HNSWConfiguration.maximumM).contains(storedM) else {
+                    throw HNSWError.loadFailed(
+                        "Graph index contains invalid M"
+                    )
+                }
+                guard storedEfConstruction >= storedM,
+                      storedEfSearch > 0 else {
+                    throw HNSWError.loadFailed(
+                        "Graph index contains invalid ef value"
+                    )
+                }
+                _ = try reader.readUInt32() // randomSeed
+                _ = try reader.readBool() // allowReplaceDeleted
+                _ = try reader.readUInt32() // maxLevel
+                _ = try reader.readUInt32() // entryPoint
+                _ = try reader.readUInt64() // generatorState
+                let labelCount = try reader.readIntFromUInt32(
+                    name: "labelCount"
+                )
+                _ = try validateArchivePayloadCapacity(
+                    labelCount: labelCount,
+                    dimensions: dimensions,
+                    fixedRecordByteCount: 21,
+                    remainingByteCount: reader.remainingByteCount,
+                    archiveName: "Graph index"
+                )
+
+                let vectorByteCount = try resourceProduct(
+                    dimensions,
+                    MemoryLayout<Float>.stride,
+                    message: "Graph archive vector size exceeds the addressable range"
+                )
+                var activeLabelCount = 0
+                var upperLevelSlotCount = 0
+                var levelStorageCount = 0
+                var neighborCount = 0
+                for _ in 0..<labelCount {
+                    _ = try reader.readUInt64()
+                    if try !reader.readBool() {
+                        activeLabelCount = try resourceSum(
+                            activeLabelCount,
+                            1,
+                            message: "Graph archive active label count exceeds the addressable range"
+                        )
+                    }
+                    let level = try reader.readIntFromUInt32(name: "level")
+                    guard level >= 0,
+                          level < maximumSerializedLevelCount else {
+                        throw HNSWError.loadFailed(
+                            "Graph index contains invalid level"
+                        )
+                    }
+                    upperLevelSlotCount = try resourceSum(
+                        upperLevelSlotCount,
+                        level,
+                        message: "Graph archive level count exceeds the addressable range"
+                    )
+                    try reader.skipBytes(count: vectorByteCount)
+                    let levelCount = try reader.readIntFromUInt32(
+                        name: "levelCount"
+                    )
+                    guard levelCount == level + 1 else {
+                        throw HNSWError.loadFailed(
+                            "Graph index level count does not match node level"
+                        )
+                    }
+                    levelStorageCount = try resourceSum(
+                        levelStorageCount,
+                        levelCount,
+                        message: "Graph archive level storage exceeds the addressable range"
+                    )
+                    for levelIndex in 0..<levelCount {
+                        let count = try reader.readIntFromUInt32(
+                            name: "neighborCount"
+                        )
+                        guard count <= max(0, labelCount - 1),
+                              count <= maximumConnections(
+                                at: levelIndex,
+                                m: storedM
+                              ) else {
+                            throw HNSWError.loadFailed(
+                                "Graph index contains too many neighbors"
+                            )
+                        }
+                        neighborCount = try resourceSum(
+                            neighborCount,
+                            count,
+                            message: "Graph archive neighbor count exceeds the addressable range"
+                        )
+                        try reader.skipBytes(
+                            count: try resourceProduct(
+                                count,
+                                MemoryLayout<UInt32>.stride,
+                                message: "Graph archive neighbor storage exceeds the addressable range"
+                            )
+                        )
+                    }
+                }
+                try reader.ensureFullyRead()
+
+                return try archiveResourceProfile(
+                    archiveByteCount: bytes.count,
+                    storedCapacity: storedCapacity,
+                    requestedCapacity: maxElements,
+                    labelCount: labelCount,
+                    activeLabelCount: activeLabelCount,
+                    upperLevelSlotCount: upperLevelSlotCount,
+                    levelStorageCount: levelStorageCount,
+                    neighborCount: neighborCount,
+                    m: storedM,
+                    efSearch: storedEfSearch,
+                    dimensions: dimensions
+                )
+            }
+        } catch let error as HNSWError {
+            throw error
+        } catch {
+            throw HNSWError.loadFailed(
+                "Failed to inspect HNSW graph archive"
+            )
+        }
+    }
+
+    private static func archiveResourceProfile(
+        archiveByteCount: Int,
+        storedCapacity: Int,
+        requestedCapacity: Int,
+        labelCount: Int,
+        activeLabelCount: Int,
+        upperLevelSlotCount: Int,
+        levelStorageCount: Int,
+        neighborCount: Int,
+        m: Int,
+        efSearch: Int,
+        dimensions: Int
+    ) throws -> HNSWArchiveResourceProfile {
+        let scalarByteCount = Scalar.self == Float16.self
+            ? MemoryLayout<Float16>.stride
+            : MemoryLayout<Float>.stride
+        let vectorBytes = try resourceProduct(
+            try resourceProduct(
+                labelCount,
+                dimensions,
+                message: "Restored vector count exceeds the addressable range"
+            ),
+            scalarByteCount,
+            message: "Restored vector storage exceeds the addressable range"
+        )
+        guard let graphBytes = HNSWConnectionStore.retainedByteCount(
+            nodeCount: labelCount,
+            totalUpperLevelSlotCount: upperLevelSlotCount,
+            m: m
+        ), let searchBytes = HNSWSearchWorkspace.retainedByteCount(
+            candidateCapacity: labelCount,
+            nearestCapacity: min(efSearch, labelCount),
+            resultCapacity: 1,
+            visitedCapacity: labelCount
+        ) else {
+            throw HNSWError.loadFailed(
+                "Restored HNSW payload exceeds the addressable range"
+            )
+        }
+        let queryBytes = try resourceProduct(
+            dimensions,
+            scalarByteCount,
+            message: "Restored query workspace exceeds the addressable range"
+        )
+        // This allowance covers dictionary buckets, labels, deletion flags,
+        // levels, and collection headers retained for every graph node.
+        let retainedBookkeepingBytes = try resourceProduct(
+            labelCount,
+            256,
+            message: "Restored node bookkeeping exceeds the addressable range"
+        )
+        var retainedBytes = 0
+        for component in [
+            vectorBytes,
+            graphBytes,
+            searchBytes,
+            queryBytes,
+            retainedBookkeepingBytes,
+        ] {
+            retainedBytes = try resourceSum(
+                retainedBytes,
+                component,
+                message: "Restored HNSW payload exceeds the addressable range"
+            )
+        }
+
+        let capacity = max(1, storedCapacity, requestedCapacity, labelCount)
+        let eagerVectorBytes = try resourceProduct(
+            try resourceProduct(
+                capacity,
+                dimensions,
+                message: "Eager vector capacity exceeds the addressable range"
+            ),
+            scalarByteCount,
+            message: "Eager vector storage exceeds the addressable range"
+        )
+        let maximumEagerComparisonBytes = 64 * 1_024 * 1_024
+        let eagerAllocationUpperBound = eagerVectorBytes
+                <= maximumEagerComparisonBytes
+            ? try resourceProduct(
+                eagerVectorBytes,
+                2,
+                message: "Eager vector allocation exceeds the addressable range"
+            )
+            : 0
+        let temporaryLabelBytes = try resourceProduct(
+            labelCount,
+            256,
+            message: "Temporary label storage exceeds the addressable range"
+        )
+        let temporaryLevelBytes = try resourceProduct(
+            levelStorageCount,
+            128,
+            message: "Temporary level storage exceeds the addressable range"
+        )
+        let temporaryNeighborBytes = try resourceProduct(
+            neighborCount,
+            MemoryLayout<Int>.stride,
+            message: "Temporary neighbor storage exceeds the addressable range"
+        )
+        var restoreBytes = retainedBytes
+        for component in [
+            archiveByteCount,
+            eagerAllocationUpperBound,
+            temporaryLabelBytes,
+            temporaryLevelBytes,
+            temporaryNeighborBytes,
+        ] {
+            restoreBytes = try resourceSum(
+                restoreBytes,
+                component,
+                message: "HNSW restore payload exceeds the addressable range"
+            )
+        }
+        return HNSWArchiveResourceProfile(
+            archiveByteCount: archiveByteCount,
+            storedCapacity: storedCapacity,
+            labelCount: labelCount,
+            activeLabelCount: activeLabelCount,
+            upperLevelSlotCount: upperLevelSlotCount,
+            estimatedRetainedPayloadByteCount: retainedBytes,
+            estimatedRestoreWorkingPayloadByteCount: restoreBytes
+        )
+    }
+
+    private static func resourceSum(
+        _ lhs: Int,
+        _ rhs: Int,
+        message: String
+    ) throws -> Int {
+        let (result, overflow) = lhs.addingReportingOverflow(rhs)
+        guard !overflow else {
+            throw HNSWError.loadFailed(message)
+        }
+        return result
+    }
+
+    private static func resourceProduct(
+        _ lhs: Int,
+        _ rhs: Int,
+        message: String
+    ) throws -> Int {
+        let (result, overflow) = lhs.multipliedReportingOverflow(by: rhs)
+        guard !overflow else {
+            throw HNSWError.loadFailed(message)
+        }
+        return result
+    }
+
     public func serializedArchive() throws -> HNSWArchive {
         state.withLock {
             var writer = HNSWArchiveWriter()
@@ -875,14 +1241,14 @@ extension HNSWIndex {
             )
             totalUpperLevelSlotCount = nextUpperLevelSlotCount
             let offset = Scalar.self == Float16.self ? loadedHalfComparisonStorage.count : loadedComparisonStorage.count
-            for _ in 0..<dimensions {
-                let value = try reader.readFloat()
-                if Scalar.self == Float16.self {
-                    loadedHalfComparisonStorage.append(Float16(value))
-                } else {
-                    loadedComparisonStorage.append(value)
-                }
-            }
+            try appendValidatedArchiveVector(
+                reader: &reader,
+                dimensions: dimensions,
+                metric: metric,
+                archiveName: "Graph index",
+                floatStorage: &loadedComparisonStorage,
+                halfStorage: &loadedHalfComparisonStorage
+            )
 
             let levelCount = try reader.readIntFromUInt32(name: "levelCount")
             guard levelCount == level + 1 else {
@@ -1051,6 +1417,51 @@ extension HNSWIndex {
         level == 0 ? max(1, m * 2) : max(1, m)
     }
 
+    private static func appendValidatedArchiveVector(
+        reader: inout HNSWArchiveReader,
+        dimensions: Int,
+        metric: DistanceMetric,
+        archiveName: String,
+        floatStorage: inout [Float],
+        halfStorage: inout [Float16]
+    ) throws {
+        var squaredNorm: Float = 0
+        for _ in 0..<dimensions {
+            let archiveValue = try reader.readFloat()
+            guard archiveValue.isFinite else {
+                throw HNSWError.loadFailed(
+                    "\(archiveName) contains non-finite vector values"
+                )
+            }
+
+            let storedValue: Float
+            if Scalar.self == Float16.self {
+                let halfValue = Float16(archiveValue)
+                guard halfValue.isFinite else {
+                    throw HNSWError.loadFailed(
+                        "\(archiveName) contains values outside the Float16 range"
+                    )
+                }
+                halfStorage.append(halfValue)
+                storedValue = Float(halfValue)
+            } else {
+                floatStorage.append(archiveValue)
+                storedValue = archiveValue
+            }
+
+            if metric.requiresNormalization {
+                squaredNorm += storedValue * storedValue
+            }
+        }
+
+        guard !metric.requiresNormalization
+                || (squaredNorm > 0 && squaredNorm.isFinite) else {
+            throw HNSWError.loadFailed(
+                "\(archiveName) contains an invalid cosine vector norm"
+            )
+        }
+    }
+
     private static func loadFlat(
         reader: inout HNSWArchiveReader,
         version: UInt32,
@@ -1118,16 +1529,19 @@ extension HNSWIndex {
         var totalUpperLevelSlotCount = 0
         for internalID in 0..<labelCount {
             let label = try reader.readUInt64()
+            guard loadedEntries[label] == nil else {
+                throw HNSWError.loadFailed("Flat index contains duplicate labels")
+            }
             let deleted = try reader.readBool()
             let offset = Scalar.self == Float16.self ? loadedHalfComparisonStorage.count : loadedComparisonStorage.count
-            for _ in 0..<dimensions {
-                let value = try reader.readFloat()
-                if Scalar.self == Float16.self {
-                    loadedHalfComparisonStorage.append(Float16(value))
-                } else {
-                    loadedComparisonStorage.append(value)
-                }
-            }
+            try appendValidatedArchiveVector(
+                reader: &reader,
+                dimensions: dimensions,
+                metric: metric,
+                archiveName: "Flat index",
+                floatStorage: &loadedComparisonStorage,
+                halfStorage: &loadedHalfComparisonStorage
+            )
             let level = generator.randomLevel(multiplier: multiplier)
             let (nextUpperLevelSlotCount, upperLevelCountOverflowed) =
                 totalUpperLevelSlotCount.addingReportingOverflow(level)
@@ -1269,6 +1683,83 @@ extension HNSWIndex {
     }
 
     @inline(__always)
+    private func validateInputVector(
+        _ vector: UnsafeBufferPointer<Scalar>,
+        name: String
+    ) throws -> Float? {
+        let containsOnlyFiniteValues: Bool
+        if Scalar.self == Float.self {
+            // Runtime type identity preserves the binding, and the typed view remains
+            // inside the caller-owned buffer's synchronous borrow.
+            let inputFloats = UnsafeBufferPointer<Float>(
+                start: UnsafeRawPointer(vector.baseAddress!)
+                    .assumingMemoryBound(to: Float.self),
+                count: vector.count
+            )
+            containsOnlyFiniteValues = VectorOperations
+                .containsOnlyFiniteValues(inputFloats)
+        } else if Scalar.self == Float16.self {
+            // Runtime type identity preserves the binding, and the typed view remains
+            // inside the caller-owned buffer's synchronous borrow.
+            let inputHalves = UnsafeBufferPointer<Float16>(
+                start: UnsafeRawPointer(vector.baseAddress!)
+                    .assumingMemoryBound(to: Float16.self),
+                count: vector.count
+            )
+            containsOnlyFiniteValues = VectorOperations
+                .containsOnlyFiniteValues(inputHalves)
+        } else {
+            containsOnlyFiniteValues = vector.allSatisfy {
+                $0.hnswFloatValue.isFinite
+            }
+        }
+        guard containsOnlyFiniteValues else {
+            throw HNSWError.invalidArgument(
+                "\(name) must contain only finite values"
+            )
+        }
+
+        guard metric.requiresNormalization else {
+            return nil
+        }
+
+        let squaredNorm: Float
+        if Scalar.self == Float.self {
+            // Runtime type identity preserves the binding, and the typed view remains
+            // inside the caller-owned buffer's synchronous borrow.
+            let inputFloats = UnsafeBufferPointer<Float>(
+                start: UnsafeRawPointer(vector.baseAddress!)
+                    .assumingMemoryBound(to: Float.self),
+                count: vector.count
+            )
+            squaredNorm = VectorOperations.squaredMagnitude(inputFloats)
+        } else if Scalar.self == Float16.self {
+            // Runtime type identity preserves the binding, and the typed view remains
+            // inside the caller-owned buffer's synchronous borrow.
+            let inputHalves = UnsafeBufferPointer<Float16>(
+                start: UnsafeRawPointer(vector.baseAddress!)
+                    .assumingMemoryBound(to: Float16.self),
+                count: vector.count
+            )
+            squaredNorm = VectorOperations.squaredMagnitude(inputHalves)
+        } else {
+            var genericSquaredNorm: Float = 0
+            for value in vector {
+                let floatValue = value.hnswFloatValue
+                genericSquaredNorm += floatValue * floatValue
+            }
+            squaredNorm = genericSquaredNorm
+        }
+        guard squaredNorm > 0 else {
+            throw HNSWError.invalidArgument("\(name) must have nonzero norm")
+        }
+        guard squaredNorm.isFinite else {
+            throw HNSWError.invalidArgument("\(name) norm must be finite")
+        }
+        return 1 / squaredNorm.squareRoot()
+    }
+
+    @inline(__always)
     private func ensureCapacity(_ buffer: inout [Float], count: Int) {
         guard buffer.count != count else { return }
         buffer = [Float](repeating: 0, count: count)
@@ -1300,6 +1791,7 @@ extension HNSWIndex {
 
     private func storeNormalizedVector(
         _ input: UnsafeBufferPointer<Scalar>,
+        normalizationScale: Float? = nil,
         into output: UnsafeMutableBufferPointer<Float>
     ) {
         precondition(input.count == output.count, "Input and output dimensions must match")
@@ -1308,7 +1800,15 @@ extension HNSWIndex {
                 start: UnsafeRawPointer(input.baseAddress!).assumingMemoryBound(to: Float.self),
                 count: input.count
             )
-            VectorOperations.normalize(inputFloats, into: output)
+            if let normalizationScale {
+                VectorOperations.scale(
+                    inputFloats,
+                    by: normalizationScale,
+                    into: output
+                )
+            } else {
+                VectorOperations.normalize(inputFloats, into: output)
+            }
         } else {
             storeVector(input, into: output)
             let outputSource = UnsafeBufferPointer(start: output.baseAddress!, count: output.count)
@@ -1336,6 +1836,7 @@ extension HNSWIndex {
 
     private func storeNormalizedHalfVector(
         _ input: UnsafeBufferPointer<Scalar>,
+        normalizationScale: Float? = nil,
         into output: UnsafeMutableBufferPointer<Float16>
     ) {
         precondition(input.count == output.count, "Input and output dimensions must match")
@@ -1344,7 +1845,15 @@ extension HNSWIndex {
                 start: UnsafeRawPointer(input.baseAddress!).assumingMemoryBound(to: Float16.self),
                 count: input.count
             )
-            VectorOperations.normalize(inputHalves, into: output)
+            if let normalizationScale {
+                VectorOperations.scale(
+                    inputHalves,
+                    by: normalizationScale,
+                    into: output
+                )
+            } else {
+                VectorOperations.normalize(inputHalves, into: output)
+            }
         } else {
             storeHalfVector(input, into: output)
             let outputSource = UnsafeBufferPointer(start: output.baseAddress!, count: output.count)
@@ -1355,6 +1864,7 @@ extension HNSWIndex {
     private func upsertVector(
         _ vector: UnsafeBufferPointer<Scalar>,
         label: UInt64,
+        normalizationScale: Float? = nil,
         state: inout State
     ) throws {
         let entry: Entry
@@ -1463,7 +1973,11 @@ extension HNSWIndex {
             state.halfComparisonStorage.withUnsafeMutableBufferPointer { storage in
                 let destination = UnsafeMutableBufferPointer(start: storage.baseAddress! + entry.offset, count: dimensions)
                 if metric.requiresNormalization {
-                    storeNormalizedHalfVector(vector, into: destination)
+                    storeNormalizedHalfVector(
+                        vector,
+                        normalizationScale: normalizationScale,
+                        into: destination
+                    )
                 } else {
                     storeHalfVector(vector, into: destination)
                 }
@@ -1472,7 +1986,11 @@ extension HNSWIndex {
             state.comparisonStorage.withUnsafeMutableBufferPointer { storage in
                 let destination = UnsafeMutableBufferPointer(start: storage.baseAddress! + entry.offset, count: dimensions)
                 if metric.requiresNormalization {
-                    storeNormalizedVector(vector, into: destination)
+                    storeNormalizedVector(
+                        vector,
+                        normalizationScale: normalizationScale,
+                        into: destination
+                    )
                 } else {
                     storeVector(vector, into: destination)
                 }

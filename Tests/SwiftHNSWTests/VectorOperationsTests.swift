@@ -98,4 +98,61 @@ struct VectorOperationsTests {
 
         #expect(abs(squaredMagnitude - 1) < 0.001)
     }
+
+    @Test("Finite-value detection covers SIMD lanes and scalar tails")
+    func finiteValueDetectionCoversSIMDAndTail() {
+        let finiteFloats: [Float] = [
+            .zero,
+            -.zero,
+            .leastNonzeroMagnitude,
+            -.leastNonzeroMagnitude,
+            .greatestFiniteMagnitude,
+            -.greatestFiniteMagnitude,
+            1,
+            -1,
+            2,
+            -2,
+        ]
+        var nonFiniteFloatLane = finiteFloats
+        nonFiniteFloatLane[7] = .infinity
+        var nonFiniteFloatTail = finiteFloats
+        nonFiniteFloatTail[9] = .nan
+
+        #expect(finiteFloats.withUnsafeBufferPointer {
+            VectorOperations.containsOnlyFiniteValues($0)
+        })
+        #expect(!nonFiniteFloatLane.withUnsafeBufferPointer {
+            VectorOperations.containsOnlyFiniteValues($0)
+        })
+        #expect(!nonFiniteFloatTail.withUnsafeBufferPointer {
+            VectorOperations.containsOnlyFiniteValues($0)
+        })
+
+        let finiteHalves: [Float16] = [
+            .zero,
+            -.zero,
+            .leastNonzeroMagnitude,
+            -.leastNonzeroMagnitude,
+            .greatestFiniteMagnitude,
+            -.greatestFiniteMagnitude,
+            1,
+            -1,
+            2,
+            -2,
+        ]
+        var nonFiniteHalfLane = finiteHalves
+        nonFiniteHalfLane[7] = .infinity
+        var nonFiniteHalfTail = finiteHalves
+        nonFiniteHalfTail[9] = .nan
+
+        #expect(finiteHalves.withUnsafeBufferPointer {
+            VectorOperations.containsOnlyFiniteValues($0)
+        })
+        #expect(!nonFiniteHalfLane.withUnsafeBufferPointer {
+            VectorOperations.containsOnlyFiniteValues($0)
+        })
+        #expect(!nonFiniteHalfTail.withUnsafeBufferPointer {
+            VectorOperations.containsOnlyFiniteValues($0)
+        })
+    }
 }
