@@ -607,7 +607,12 @@ do {
 
 ## License
 
-The C++ reference benchmark wraps [hnswlib](https://github.com/nmslib/hnswlib), which is licensed under Apache 2.0.
+The SwiftHNSW source is licensed under the [MIT License](LICENSE).
+
+The separate C++ reference benchmark includes files derived from
+[hnswlib](https://github.com/nmslib/hnswlib), which remain licensed under the
+[Apache License, Version 2.0](Benchmarks/HNSWReferenceComparison/LICENSE-APACHE-2.0).
+See [Third-Party Notices](THIRD_PARTY_NOTICES.md) for attribution and scope.
 
 ## Acknowledgments
 
