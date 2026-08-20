@@ -54,6 +54,12 @@ let package = Package(
                 .product(name: "SwiftHNSW", package: "swift-hnsw")
             ]
         ),
+        .testTarget(
+            name: "SwiftHNSWBenchmarks",
+            dependencies: [
+                .product(name: "SwiftHNSW", package: "swift-hnsw")
+            ]
+        ),
     ],
     cxxLanguageStandard: .cxx17
 )

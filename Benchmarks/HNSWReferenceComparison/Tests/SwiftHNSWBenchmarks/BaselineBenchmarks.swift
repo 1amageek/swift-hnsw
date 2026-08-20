@@ -2,11 +2,11 @@
 // Baseline performance measurements for Float32 and Float16
 // across multiple embedding dimensions.
 //
-// Run: xcodebuild test -scheme swift-hnsw -only-testing SwiftHNSWTests/BaselineBenchmarks
+// Run from the independent HNSWReferenceComparison benchmark package.
 
 import Testing
 import Foundation
-@testable import SwiftHNSW
+import SwiftHNSW
 
 // MARK: - Report Builder
 

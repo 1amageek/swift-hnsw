@@ -2,12 +2,11 @@
 // ANN-Benchmarks standard benchmarks for SwiftHNSW
 // Based on https://ann-benchmarks.com methodology
 //
-// Run all: xcodebuild test -scheme swift-hnsw -destination 'platform=macOS'
-// Run one suite with the corresponding xcodebuild -only-testing selector.
+// Run from the independent HNSWReferenceComparison benchmark package.
 
 import Testing
 import Foundation
-@testable import SwiftHNSW
+import SwiftHNSW
 
 // MARK: - Shared Utilities
 

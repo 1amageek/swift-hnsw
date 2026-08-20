@@ -72,6 +72,9 @@ TURBOQUANT_BENCHMARK_CASE=d768 TURBOQUANT_PRIMARY_ONLY=1 \
 ```
 
 The production index is the portability baseline. The hnswlib code is retained only as a benchmark reference and is not part of default library builds.
+The same isolated package owns the `SwiftHNSWBenchmarks` target for scale and
+throughput workloads; the parent `SwiftHNSWTests` target contains correctness
+contracts only.
 
 ## Quick Start
 

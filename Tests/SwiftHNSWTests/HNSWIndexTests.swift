@@ -103,37 +103,6 @@ struct HNSWIndexTests {
         #expect(Bool(true))
     }
 
-    @Test("Large scale test")
-    func testLargeScale() throws {
-        let dimensions = 128
-        let numElements = 1000
-        let index = try HNSWIndex<Float>(
-            dimensions: dimensions,
-            maxElements: numElements,
-            metric: .l2,
-            configuration: HNSWConfiguration(m: 16, efConstruction: 200, efSearch: 50)
-        )
-
-        // Generate random vectors
-        for i in 0..<numElements {
-            var vector = [Float](repeating: 0, count: dimensions)
-            for j in 0..<dimensions {
-                vector[j] = Float.random(in: -1...1)
-            }
-            try index.add(vector, label: UInt64(i))
-        }
-
-        #expect(index.count == numElements)
-
-        // Search
-        var query = [Float](repeating: 0, count: dimensions)
-        for i in 0..<dimensions {
-            query[i] = Float.random(in: -1...1)
-        }
-
-        let results = try index.search(query, k: 10)
-        #expect(results.count == 10)
-    }
 }
 
 // MARK: - Float16 Tests
@@ -212,31 +181,6 @@ struct Float16Tests {
         let query: [Float16] = [3.0, 0.0, 0.0, 0.0]
         let results = try index.search(query, k: 2)
         #expect(results.count == 2)
-    }
-
-    @Test("Float16 large scale test")
-    func testFloat16LargeScale() throws {
-        let dimensions = 128
-        let numElements = 1000
-        let index = try HNSWIndex<Float16>(
-            dimensions: dimensions,
-            maxElements: numElements,
-            metric: .l2,
-            configuration: HNSWConfiguration(m: 16, efConstruction: 200, efSearch: 50)
-        )
-
-        // Generate random vectors
-        for i in 0..<numElements {
-            let vector: [Float16] = (0..<dimensions).map { _ in Float16.random(in: -1...1) }
-            try index.add(vector, label: UInt64(i))
-        }
-
-        #expect(index.count == numElements)
-
-        // Search
-        let query: [Float16] = (0..<dimensions).map { _ in Float16.random(in: -1...1) }
-        let results = try index.search(query, k: 10)
-        #expect(results.count == 10)
     }
 
     @Test("Float16 getVector roundtrip")

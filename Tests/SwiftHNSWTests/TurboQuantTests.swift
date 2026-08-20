@@ -3,7 +3,7 @@
 
 import Testing
 import Foundation
-@_spi(Benchmarking) @testable import SwiftHNSW
+@testable import SwiftHNSW
 
 private func removeTemporaryFile(atPath path: String) {
     guard FileManager.default.fileExists(atPath: path) else {
